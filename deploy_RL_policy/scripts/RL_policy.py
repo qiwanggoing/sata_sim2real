@@ -137,11 +137,11 @@ def main():
 
 if __name__=="__main__":
     # Load config
-    config_path = f"/home/song/unitree_rl_gym/ros_communication/deploy_real/configs/go2.yaml"
+    config_path = f"/home/song/unitree_rl_gym/ros_communication/deploy_RL_policy/configs/go2.yaml"
     config = Config(config_path)
     parser = argparse.ArgumentParser()
     # parser.add_argument('--simulation', type=bool, required=True, help='simulation or reality')
     parser.add_argument('--simulation', type=str, choices=["True", "False"], default="False")
     args = parser.parse_args()
-    args.simulation = args.simulation == "True"
+    args.simulation = args.simulation == "False"
     main()

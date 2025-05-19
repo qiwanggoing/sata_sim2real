@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(deploy_real)
+project(deploy_RL_policy)
 
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
@@ -36,7 +36,7 @@ add_executable(low_level_ctrl src/low_level_ctrl.cpp src/common/motor_crc.cpp)
 # add_executable(low_level_ctrl_simulation src/low_level_ctrl_simulation.cpp src/common/motor_crc.cpp)
 
 install(PROGRAMS 
-  scripts/recieve_data.py
+  scripts/RL_policy.py
   scripts/xbox_command.py
   scripts/config.py
   scripts/mujoco_simulator.py
@@ -51,20 +51,11 @@ ament_target_dependencies(low_level_ctrl
   unitree_api
   std_msgs
 )
-# ament_target_dependencies(low_level_ctrl_simulation
-#   rclcpp
-#   sensor_msgs
-#   unitree_go
-#   unitree_api
-#   std_msgs
-# )
-# target_link_libraries(low_level_ctrl unitree_go)
+
 install(TARGETS low_level_ctrl
   DESTINATION lib/${PROJECT_NAME}
 )
-# install(TARGETS low_level_ctrl_simulation
-#   DESTINATION lib/${PROJECT_NAME}
-# )
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

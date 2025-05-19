@@ -30,7 +30,7 @@ class MujocoSimulator(Node):
         self.init_mujoco()
         self.target_dof_pos=[0]*12
         self.tau=[0.0]*12        
-        # Load policy
+        # Load params
         self.timer = self.create_timer(0.002, self.publish_sensor_data)
         self.timer2=self.create_timer(0.001,self.update_tau)
         self.running=True
@@ -53,9 +53,6 @@ class MujocoSimulator(Node):
         for i in range(self.m.njnt):
             print(f"{i}: {self.m.joint(i).name}")
    
-    # def target_pos_callback(self,msg):
-    #     self.recieve_data=True
-    #     self.target_dof_pos=msg.data[:12]
         
     def target_torque_callback(self,msg):
         self.recieve_data=True
@@ -95,8 +92,6 @@ class MujocoSimulator(Node):
 
     def publish_sensor_data(self):
         low_state_msg=LowState()
-        # print(type(self.d.qpos))
-        # print(type(self.d.sensordata[55:67]))
         for i in range(12):
             low_state_msg.motor_state[i].q=self.d.qpos[7+i]
             low_state_msg.motor_state[i].dq=self.d.qvel[6+i]
