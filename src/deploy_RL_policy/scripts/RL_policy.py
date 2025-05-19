@@ -6,9 +6,10 @@ import numpy as np
 import time
 from rclpy.node import Node
 import argparse
-from unitree_go.msg import LowState,LowCmd
+from unitree_go.msg import LowState
 from xbox_command import XboxController
 from std_msgs.msg import Float32MultiArray
+from mujoco_simulator import project_root
 
 class dataReciever(Node):
     def __init__(self,config:Config):
@@ -25,8 +26,7 @@ class dataReciever(Node):
         self.obs = np.zeros(config.num_obs, dtype=np.float32)
         self.cmd = np.array([0.0, 0, 0])
         self.low_state=LowState()
-        # self.kps=self.config.kps
-        # self.kds=self.config.kds
+
         if args.simulation:
             self.low_state_sub=self.create_subscription(LowState,"/mujoco/lowstate",self.low_state_callback,10)
             print("reading data from simuation")
@@ -122,11 +122,6 @@ class dataReciever(Node):
         # print(gravity_orientation)
         return gravity_orientation
 
-    # @staticmethod
-    # def pd_control(target_q, q, kp, dq, kd):
-    #     """Calculates torques from position commands"""
-    #     torques=(target_q - q) * kp -  dq * kd
-    #     return torques
     
 def main():
     rclpy.init()
@@ -137,7 +132,7 @@ def main():
 
 if __name__=="__main__":
     # Load config
-    config_path = f"/home/song/unitree_rl_gym/ros_communication/src/deploy_RL_policy/configs/go2.yaml"
+    config_path = project_root/"src"/"deploy_RL_policy"/"configs"/"go2.yaml"
     config = Config(config_path)
     parser = argparse.ArgumentParser()
     # parser.add_argument('--simulation', type=bool, required=True, help='simulation or reality')

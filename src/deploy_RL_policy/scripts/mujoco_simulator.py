@@ -12,8 +12,7 @@ from std_msgs.msg import Float32MultiArray
 import threading
 import time
 from std_msgs.msg import Float32MultiArray
-
-
+project_root=Path(__file__).parents[4]
 class MujocoSimulator(Node):
     def __init__(self):
         super().__init__("mujoco_simulator")
@@ -25,7 +24,7 @@ class MujocoSimulator(Node):
         self.target_torque_suber=self.create_subscription(LowCmd,"/mujoco/lowcmd",self.target_torque_callback,10)
 
         self.step_counter = 0
-        self.xml_path="/home/song/mujoco-3.3.0-linux-x86_64/mujoco-3.3.0/model/go2/go2.xml"
+        self.xml_path=project_root/"resources"/"go2"/"go2.xml"
         # Initialize Mujoco
         self.init_mujoco()
         self.target_dof_pos=[0]*12
@@ -43,7 +42,7 @@ class MujocoSimulator(Node):
     def init_mujoco(self):
         """Initialize Mujoco model and data"""
         
-        self.m = mujoco.MjModel.from_xml_path(self.xml_path)
+        self.m = mujoco.MjModel.from_xml_path(str(self.xml_path))
         self.d = mujoco.MjData(self.m)
         self.m.opt.timestep = 0.005 
         self.viewer = mujoco.viewer.launch_passive(self.m, self.d)
