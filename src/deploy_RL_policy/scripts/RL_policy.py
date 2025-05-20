@@ -137,7 +137,7 @@ if __name__=="__main__":
     config = Config(config_path)
     parser = argparse.ArgumentParser()
     # parser.add_argument('--simulation', type=bool, required=True, help='simulation or reality')
-    parser.add_argument('--simulation', type=str, choices=["True", "False"], default="False")
+    parser.add_argument('--is_simulation', type=str, choices=["True", "False"], default="False")
     args = parser.parse_args()
-    args.simulation = args.simulation == "False"
+    args.simulation = args.is_simulation == "False"
     main()
