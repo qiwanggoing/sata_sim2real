@@ -3,7 +3,7 @@ import rclpy
 import torch
 from config import Config
 import numpy as np
-import time
+import os
 from rclpy.node import Node
 import argparse
 from pathlib import Path
@@ -17,8 +17,10 @@ class dataReciever(Node):
         super().__init__("data_reciever")
         self.config = config
         self.cmd_sub=XboxController(self)
-        # Initialize the policy network
-        self.policy = torch.jit.load(config.policy_path)
+        # Initialize the policy network()
+        script_dir = os.path.dirname(os.path.abspath(__file__))  
+        policy_path = os.path.join(script_dir, self.config.policy_path)
+        self.policy = torch.jit.load(policy_path)
         # Initializing process variables
         self.qj = np.zeros(config.num_actions, dtype=np.float32)
         self.dqj = np.zeros(config.num_actions, dtype=np.float32)
@@ -147,7 +149,7 @@ def main():
 
 if __name__=="__main__":
     # Load config
-    config_path = project_root/"src"/"deploy_RL_policy"/"configs"/"go2.yaml"
+    config_path = project_root/"src"/"deploy_rl_policy"/"configs"/"go2.yaml"
     config = Config(config_path)
     parser = argparse.ArgumentParser()
     parser.add_argument('--is_simulation', type=str, choices=["True", "False"], default="True")

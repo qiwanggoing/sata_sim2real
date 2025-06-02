@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(deploy_RL_policy)
+project(deploy_rl_policy)
 
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
@@ -36,7 +36,7 @@ add_executable(low_level_ctrl src/low_level_ctrl.cpp src/common/motor_crc.cpp)
 # add_executable(low_level_ctrl_simulation src/low_level_ctrl_simulation.cpp src/common/motor_crc.cpp)
 
 install(PROGRAMS 
-  scripts/RL_policy.py
+  scripts/rl_policy.py
   scripts/xbox_command.py
   scripts/config.py
   scripts/mujoco_simulator.py
