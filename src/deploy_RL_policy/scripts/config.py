@@ -6,9 +6,9 @@ class Config:
     def __init__(self, file_path) -> None:
         with open(file_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
-            self.control_dt = config["control_dt"]
+            # self.control_dt = config["control_dt"]
             self.policy_path=config["policy_path"]
-            self.leg_joint2motor_idx = config["leg_joint2motor_idx"]
+            # self.leg_joint2motor_idx = config["leg_joint2motor_idx"]
             self.kps = config["kps"]
             self.kds = config["kds"]
             self.default_angles = np.array(config["default_angles"], dtype=np.float32)

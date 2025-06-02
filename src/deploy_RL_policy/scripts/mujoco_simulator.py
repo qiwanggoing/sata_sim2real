@@ -24,7 +24,7 @@ class MujocoSimulator(Node):
         self.target_torque_suber=self.create_subscription(LowCmd,"/mujoco/lowcmd",self.target_torque_callback,10)
 
         self.step_counter = 0
-        self.xml_path=project_root/"resources"/"go2"/"go2.xml"
+        self.xml_path=project_root/"resources"/"go2"/"scene_terrain.xml"
         # Initialize Mujoco
         self.init_mujoco()
         self.target_dof_pos=[0]*12
@@ -33,8 +33,8 @@ class MujocoSimulator(Node):
         self.timer = self.create_timer(0.002, self.publish_sensor_data)
         self.timer2=self.create_timer(0.001,self.update_tau)
         self.running=True
-        self.kps=np.array([20.0]*12)
-        self.kds=np.array([1.0]*12)
+        self.kps=np.array([30.0]*12)
+        self.kds=np.array([0.75]*12)
         self.recieve_data=False
         self.sim_thread=threading.Thread(target=self.step_simulation)
         self.sim_thread.start()
@@ -46,7 +46,6 @@ class MujocoSimulator(Node):
         self.d = mujoco.MjData(self.m)
         self.m.opt.timestep = 0.005 
         self.viewer = mujoco.viewer.launch_passive(self.m, self.d)
-        self.control_decimal=0
         print("Number of qpos:", self.m.nq)
         print("Joint order:")
         for i in range(self.m.njnt):
@@ -59,6 +58,7 @@ class MujocoSimulator(Node):
             self.target_dof_pos[i]=msg.motor_cmd[i].q
             self.kps[i]=msg.motor_cmd[i].kp
             self.kds[i]=msg.motor_cmd[i].kd
+            
     def update_tau(self):
         if not self.recieve_data:
             return
@@ -70,11 +70,10 @@ class MujocoSimulator(Node):
             if not self.recieve_data:
                 continue
             step_start=time.time()
-            self.control_decimal+=1
             """Main simulation step (executed in another thread)"""
             self.d.ctrl[:]=self.tau
             Torque=Float32MultiArray()
-            Torque.data=self.target_dof_pos
+            Torque.data=self.tau
             self.torque_pub.publish(Torque)
             # Mujoco step
             mujoco.mj_step(self.m, self.d)  
@@ -98,9 +97,6 @@ class MujocoSimulator(Node):
         low_state_msg.imu_state.gyroscope=self.d.sensordata[40:43].astype(np.float32)
         self.low_state_puber.publish(low_state_msg)
         pos=Float32MultiArray()
-        sequence_joint=[0,1,2,4,5,6,3,10,11,12,7,8,9,16,17,18,13,14,15]
-        # print(len(self.d.qpos[sequence_joint].astype(np.float32)))
-        # pos.data=self.d.qpos[sequence_joint].astype(np.float32)
         pos.data=self.d.qpos[:19].tolist()
         self.pos_pub.publish(pos)
   

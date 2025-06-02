@@ -178,8 +178,8 @@ void LowLevelControl::run_policy()
     {
         cmd_msg_.motor_cmd[i].mode = 0x01; // Set toque mode, 0x00 is passive mode
         cmd_msg_.motor_cmd[i].q = rl_target_pos_.data[i];
-        cmd_msg_.motor_cmd[i].kp = 20;
-        cmd_msg_.motor_cmd[i].kd = 0.5;
+        cmd_msg_.motor_cmd[i].kp = 30;
+        cmd_msg_.motor_cmd[i].kd = 0.75;
         // cmd_msg_.motor_cmd[i].q = standing_angels_[i];
         // cmd_msg_.motor_cmd[i].kp = kp[i];
         // cmd_msg_.motor_cmd[i].kd = kd[i];

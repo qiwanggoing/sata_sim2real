@@ -6,10 +6,11 @@ import numpy as np
 import time
 from rclpy.node import Node
 import argparse
+from pathlib import Path
 from unitree_go.msg import LowState
 from xbox_command import XboxController
 from std_msgs.msg import Float32MultiArray
-from mujoco_simulator import project_root
+project_root=Path(__file__).parents[4]
 
 class dataReciever(Node):
     def __init__(self,config:Config):
@@ -24,6 +25,7 @@ class dataReciever(Node):
         self.action = np.zeros(config.num_actions, dtype=np.float32)
         self.target_dof_pos = config.default_angles.copy()
         self.obs = np.zeros(config.num_obs, dtype=np.float32)
+        self.cur_obs=np.zeros(45,dtype=np.float32)
         self.cmd = np.array([0.0, 0, 0])
         self.low_state=LowState()
 
@@ -37,7 +39,7 @@ class dataReciever(Node):
 
         self.get_logger().info("Waiting for data")
         self.timer = self.create_timer(0.02, self.run)
-        self.torque_puber=self.create_publisher(Float32MultiArray,"/rl/target_pos",10)
+        self.target_pos_puber=self.create_publisher(Float32MultiArray,"/rl/target_pos",10)
 
 
 
@@ -58,7 +60,7 @@ class dataReciever(Node):
         
         # imu_state quaternion: w, x, y, z
         quat = self.low_state.imu_state.quaternion
-        ang_vel = np.array([self.low_state.imu_state.gyroscope], dtype=np.float32)
+        ang_vel = np.array(self.low_state.imu_state.gyroscope, dtype=np.float32)
 
         # create observation
         gravity_orientation = self.get_gravity_orientation(quat)
@@ -69,21 +71,35 @@ class dataReciever(Node):
         self.cmd=np.zeros(3)
         self.left_button,self.right_button=self.cmd_sub.is_pressed()
         if self.left_button and self.right_button:
-            linear_x,linear_y=self.cmd_sub.get_left_stick()
-            angular_z=self.cmd_sub.get_right_stick()
-            self.cmd=0.7*np.array([linear_x,linear_y,angular_z])
-            # print(self.cmd)
-        self.obs[:3] = ang_vel
-        self.obs[3:6] = gravity_orientation
-        self.obs[6:9] = self.cmd * self.config.cmd_scale 
-        self.obs[9 : 21] = qj_obs
-        self.obs[21 : 33] = dqj_obs
-        self.obs[33:45] = self.action
+            if self.cmd_sub.axes[7]==0:
+                self.cmd_sub.linear_x+=-np.sign(self.cmd_sub.linear_x)*0.02
+            else:
+                self.cmd_sub.linear_x+=np.sign(self.cmd_sub.axes[7])*0.01
+            if self.cmd_sub.axes[6]==0:
+                self.cmd_sub.linear_y+=-np.sign(self.cmd_sub.linear_y)*0.02
+            else:
+                self.cmd_sub.linear_y+=np.sign(self.cmd_sub.axes[6])*0.01
+            self.cmd_sub.linear_x=np.clip(self.cmd_sub.linear_x,-self.cmd_sub.max_speed,self.cmd_sub.max_speed)
+            self.cmd_sub.linear_y=np.clip(self.cmd_sub.linear_y,-self.cmd_sub.max_speed,self.cmd_sub.max_speed)
+            self.cmd_sub.angular_z=self.cmd_sub.get_right_stick()
+        else:
+            self.cmd_sub.linear_x+=-np.sign(self.cmd_sub.linear_x)*0.02
+            self.cmd_sub.linear_y+=-np.sign(self.cmd_sub.linear_y)*0.02
+            self.cmd_sub.angular_z+=-np.sign(self.cmd_sub.angular_z)*0.02
+            
+        self.cmd=np.array([self.cmd_sub.linear_x,self.cmd_sub.linear_y,self.cmd_sub.angular_z])
+        self.cur_obs[:3] = self.cmd * self.config.cmd_scale 
+        self.cur_obs[3:6] = gravity_orientation
+        self.cur_obs[6:9] = ang_vel
+        self.cur_obs[9: 21] = qj_obs
+        self.cur_obs[21:33] = dqj_obs
+        self.cur_obs[33:45] = self.action
+        self.obs=np.concatenate((self.obs[45:],self.cur_obs[:45]))
         self.obs=np.clip(self.obs,-100,100)
         # Get the action from the policy network
         obs_tensor = torch.from_numpy(self.obs).unsqueeze(0)
         self.action = self.policy(obs_tensor).detach().numpy().squeeze()
-        self.action=np.clip(self.action,-100,100)
+        # self.action=np.clip(self.action,-100,100)
         
         # transform action to target_dof_pos
         self.target_dof_pos = self.config.default_angles + self.action * self.config.action_scale
@@ -103,7 +119,7 @@ class dataReciever(Node):
         '''
         msg=Float32MultiArray()
         msg.data.extend(self.target_dof_pos.astype(np.float32)[sequence].tolist())
-        self.torque_puber.publish(msg)
+        self.target_pos_puber.publish(msg)
         
         
         
@@ -119,7 +135,6 @@ class dataReciever(Node):
         gravity_orientation[0] = 2 * (-qz * qx + qw * qy)
         gravity_orientation[1] = -2 * (qz * qy + qw * qx)
         gravity_orientation[2] = 1 - 2 * (qw * qw + qz * qz)
-        # print(gravity_orientation)
         return gravity_orientation
 
     
@@ -133,11 +148,9 @@ def main():
 if __name__=="__main__":
     # Load config
     config_path = project_root/"src"/"deploy_RL_policy"/"configs"/"go2.yaml"
-    policy_path=project_root/"resources"/"policies"/"policy_with_45_obs.pt"
     config = Config(config_path)
     parser = argparse.ArgumentParser()
-    # parser.add_argument('--simulation', type=bool, required=True, help='simulation or reality')
-    parser.add_argument('--is_simulation', type=str, choices=["True", "False"], default="False")
+    parser.add_argument('--is_simulation', type=str, choices=["True", "False"], default="True")
     args = parser.parse_args()
-    args.simulation = args.is_simulation == "False"
+    args.simulation = args.is_simulation == "True"
     main()

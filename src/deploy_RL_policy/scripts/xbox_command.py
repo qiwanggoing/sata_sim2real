@@ -7,14 +7,18 @@ class XboxController:
         self.node = node
         self.axes = []
         self.buttons = []
+        self.linear_x=0
+        self.linear_y=0
+        self.angular_z=0
         self._sub = node.create_subscription(
             Joy,
             '/joy',
             self._joy_callback,
             10
         )
-        self._last_msg_time = 0
+        self._last_msg_time =0
         self._timeout = 0.1
+        self.max_speed=0.3
 
     def _joy_callback(self, msg: Joy):
         self.axes = msg.axes
