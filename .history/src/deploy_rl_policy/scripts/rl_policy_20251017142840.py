@@ -78,10 +78,24 @@ class dataReciever(Node):
         self.cmd=np.zeros(3)
         self.left_button,self.right_button=self.cmd_sub.is_pressed()
         if self.left_button and self.right_button:
-            linear_x,linear_y=self.cmd_sub.get_left_stick()
-            angular_z=self.cmd_sub.get_right_stick()
-            print("command received:",linear_x,linear_y,angular_z)
-            self.cmd=0.7*np.array([linear_x,linear_y,angular_z])            
+            if self.cmd_sub.axes[7]==0:
+                self.cmd_sub.linear_x+=-np.sign(self.cmd_sub.linear_x)*0.02
+            else:
+                self.cmd_sub.linear_x+=np.sign(self.cmd_sub.axes[7])*0.01
+            if self.cmd_sub.axes[6]==0:
+                self.cmd_sub.linear_y+=-np.sign(self.cmd_sub.linear_y)*0.02
+            else:
+                self.cmd_sub.linear_y+=np.sign(self.cmd_sub.axes[6])*0.01
+            self.cmd_sub.linear_x=np.clip(self.cmd_sub.linear_x,-self.cmd_sub.max_speed,self.cmd_sub.max_speed)
+            self.cmd_sub.linear_y=np.clip(self.cmd_sub.linear_y,-self.cmd_sub.max_speed,self.cmd_sub.max_speed)
+            self.cmd_sub.angular_z=self.cmd_sub.get_right_stick()
+        else:
+            self.cmd_sub.linear_x+=-np.sign(self.cmd_sub.linear_x)*0.02
+            self.cmd_sub.linear_y+=-np.sign(self.cmd_sub.linear_y)*0.02
+            self.cmd_sub.angular_z+=-np.sign(self.cmd_sub.angular_z)*0.02
+
+            
+        self.cmd=np.array([self.cmd_sub.linear_x,self.cmd_sub.linear_y,self.cmd_sub.angular_z])
         print(self.cmd)
         self.cur_obs[:3] = self.cmd * self.config.cmd_scale 
         self.cur_obs[3:6] = gravity_orientation

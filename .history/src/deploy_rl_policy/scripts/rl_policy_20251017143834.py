@@ -81,7 +81,10 @@ class dataReciever(Node):
             linear_x,linear_y=self.cmd_sub.get_left_stick()
             angular_z=self.cmd_sub.get_right_stick()
             print("command received:",linear_x,linear_y,angular_z)
-            self.cmd=0.7*np.array([linear_x,linear_y,angular_z])            
+            self.cmd=0.7*np.array([linear_x,linear_y,angular_z])
+
+            
+        self.cmd=np.array([self.cmd_sub.linear_x,self.cmd_sub.linear_y,self.cmd_sub.angular_z])
         print(self.cmd)
         self.cur_obs[:3] = self.cmd * self.config.cmd_scale 
         self.cur_obs[3:6] = gravity_orientation

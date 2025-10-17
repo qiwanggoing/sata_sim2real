@@ -37,7 +37,7 @@ float clip_val(float val, int index)
     }
     return val;
 }
-LowLevelControl::LowLevelControl() : Node("finite_state_machine_node")
+LowLevelControl::LowLevelControl() : Node("low_level_control_node")
 {
     this->declare_parameter("is_simulation", true);
     this->get_parameter("is_simulation", is_simulation);
@@ -92,8 +92,6 @@ void LowLevelControl::target_pos_callback(std_msgs::msg::Float32MultiArray::Shar
 {
     recieved_data_ = true;
     rl_target_pos_.data = msg->data;
-    if (is_standing_ and should_run_policy_)
-    run_policy();
 }
 void LowLevelControl::joy_callback(sensor_msgs::msg::Joy::SharedPtr msg)
 {
@@ -141,8 +139,8 @@ void LowLevelControl::state_machine()
     }
     else if (is_standing_ and should_run_policy_) // from stand up state to policy state
     {
-        // run_policy();
-        // cout << "should run policy" << endl;
+        run_policy();
+        cout << "should run policy" << endl;
     }
     else
     {
@@ -185,6 +183,9 @@ void LowLevelControl::run_policy()
         cmd_msg_.motor_cmd[i].q = rl_target_pos_.data[i];
         cmd_msg_.motor_cmd[i].kp = 30;
         cmd_msg_.motor_cmd[i].kd = 0.75;
+        // cmd_msg_.motor_cmd[i].q = standing_angels_[i];
+        // cmd_msg_.motor_cmd[i].kp = kp[i];
+        // cmd_msg_.motor_cmd[i].kd = kd[i];
         cmd_msg_.motor_cmd[i].dq = 0;
         cmd_msg_.motor_cmd[i].tau = 0;
         vec.push_back(rl_target_pos_.data[i]);

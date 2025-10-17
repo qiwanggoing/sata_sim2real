@@ -26,7 +26,7 @@ class XboxController:
         self._last_msg_time=time.time()
 
     def get_left_stick(self):
-        return (self.axes[1], self.axes[0]) if len(self.axes) >= 5 else (0.0, 0.0)
+        return (self.axes[1], self.axes[0]) if len(self.axes) >= 2 else (0.0, 0.0)
 
     def get_right_stick(self):
         return self.axes[3] if len(self.axes) >= 5 else 0
