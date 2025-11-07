@@ -7,12 +7,13 @@ import mujoco
 import numpy as np
 from unitree_go.msg import LowState,LowCmd
 from pathlib import Path
-from xbox_command import XboxController
+from xbox_command import XboxController # 假设 xbox_command 在同一目录
 from std_msgs.msg import Float32MultiArray
 import threading
 import time
 from std_msgs.msg import Float32MultiArray
 project_root=Path(__file__).parents[4]
+
 class MujocoSimulator(Node):
     def __init__(self):
         super().__init__("mujoco_simulator")
@@ -21,20 +22,23 @@ class MujocoSimulator(Node):
         self.pos_pub=self.create_publisher(Float32MultiArray,"/mujoco/pos",10)
         self.force_pub=self.create_publisher(Float32MultiArray,"/mujoco/force",10)
         self.torque_pub=self.create_publisher(Float32MultiArray,"/mujoco/torque",10)
+        
+        # !!!修改!!!: 订阅 /mujoco/lowcmd (回调函数将被修改)
         self.target_torque_suber=self.create_subscription(LowCmd,"/mujoco/lowcmd",self.target_torque_callback,10)
 
         self.step_counter = 0
         self.xml_path=project_root/"resources"/"go2"/"scene_terrain.xml"
-        # Initialize Mujoco
+        
+        # 初始化 Mujoco
         self.init_mujoco()
-        self.target_dof_pos=[0]*12
-        self.tau=[0.0]*12        
-        # Load params
+        self.tau=[0.0]*12 # tau 将由 target_torque_callback 直接计算和设置
+        
         self.timer = self.create_timer(0.002, self.publish_sensor_data)
-        self.timer2=self.create_timer(0.001,self.update_tau)
+        
+        # !!!删除!!!: self.timer2 和 self.update_tau
+        # (PD控制和力矩应用将在 target_torque_callback 中处理)
+        
         self.running=True
-        self.kps=np.array([30.0]*12)
-        self.kds=np.array([0.75]*12)
         self.recieve_data=False
         self.sim_thread=threading.Thread(target=self.step_simulation)
         self.sim_thread.start()
@@ -44,41 +48,65 @@ class MujocoSimulator(Node):
         
         self.m = mujoco.MjModel.from_xml_path(str(self.xml_path))
         self.d = mujoco.MjData(self.m)
-        self.m.opt.timestep = 0.005 
+        self.m.opt.timestep = 0.005 # 保持 0.005s (200Hz)
         self.viewer = mujoco.viewer.launch_passive(self.m, self.d)
         print("Number of qpos:", self.m.nq)
         print("Joint order:")
         for i in range(self.m.njnt):
             print(f"{i}: {self.m.joint(i).name}")
    
-        
-    def target_torque_callback(self,msg):
+    # !!!修改!!!: target_torque_callback 现在处理 PD 和 纯力矩
+    def target_torque_callback(self,msg: LowCmd):
         self.recieve_data=True
-        for i in range(12):
-            self.target_dof_pos[i]=msg.motor_cmd[i].q
-            self.kps[i]=msg.motor_cmd[i].kp
-            self.kds[i]=msg.motor_cmd[i].kd
-            
-    def update_tau(self):
-        if not self.recieve_data:
-            return
-        for i in range(12):
-            self.tau[i]=self.pd_control(self.target_dof_pos[i],self.d.qpos[7+i],self.kps[i],self.d.qvel[6+i],self.kds[i])
+        temp_tau = [0.0] * 12 # 临时力矩列表
         
+        for i in range(12):
+            kp = msg.motor_cmd[i].kp
+            kd = msg.motor_cmd[i].kd
+            
+            if kp > 0:
+                # 1. PD 命令 (用于站立/趴下)
+                target_q = msg.motor_cmd[i].q
+                target_dq = msg.motor_cmd[i].dq 
+                
+                # 从MuJoCo数据中获取当前状态
+                current_q = self.d.qpos[7+i]
+                current_dq = self.d.qvel[6+i]
+                
+                # 计算PD力矩 (静态 PD 控制)
+                pd_torque = self.pd_control(target_q, current_q, kp, current_dq, kd)
+                
+                # 加上前馈力矩 (如果有的话)
+                temp_tau[i] = pd_torque + msg.motor_cmd[i].tau
+                
+            else:
+                # 2. 纯力矩命令 (Kp=0, Kd=0) (用于RL策略)
+                temp_tau[i] = msg.motor_cmd[i].tau
+        
+        # 将计算好的力矩赋给 self.tau (供仿真线程使用)
+        self.tau = temp_tau
+        
+    # !!!删除!!!: update_tau 方法
+    
     def step_simulation(self):
         while self.viewer.is_running() and self.running :
             if not self.recieve_data:
                 continue
             step_start=time.time()
-            """Main simulation step (executed in another thread)"""
-            self.d.ctrl[:]=self.tau
+            
+            # !!!修改!!!: 直接应用 self.tau (由回调函数计算)
+            self.d.ctrl[:]=self.tau 
+            
             Torque=Float32MultiArray()
             Torque.data=self.tau
             self.torque_pub.publish(Torque)
+            
             # Mujoco step
             mujoco.mj_step(self.m, self.d)  
+            
             # Sync Mujoco viewer
             self.viewer.sync()
+            
             time_until_next_step = self.m.opt.timestep - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
@@ -89,6 +117,7 @@ class MujocoSimulator(Node):
 
 
     def publish_sensor_data(self):
+        # ... (发布传感器数据的逻辑保持不变) ...
         low_state_msg=LowState()
         for i in range(12):
             low_state_msg.motor_state[i].q=self.d.qpos[7+i]
@@ -111,7 +140,9 @@ class MujocoSimulator(Node):
     @staticmethod
     def pd_control(target_q, q, kp, dq, kd):
         """Calculates torques from position commands"""
-        torques=(target_q - q) * kp -  dq * kd
+        # 注意：原始代码的pd是 (target_q - q) * kp - dq * kd
+        # 我们这里假设 target_dq = 0
+        torques = (target_q - q) * kp - dq * kd
         return torques
     
 def main(args=None):
@@ -129,4 +160,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-

@@ -23,7 +23,8 @@ private:
     void init_cmd();
     void state_callback(unitree_go::msg::LowState::SharedPtr msg);
     void joy_callback(sensor_msgs::msg::Joy::SharedPtr msg);
-    void target_pos_callback(std_msgs::msg::Float32MultiArray::SharedPtr msg);
+    // !!!修改!!!: 1. 重命名回调函数
+    void target_torque_callback(std_msgs::msg::Float32MultiArray::SharedPtr msg);
     void state_machine();
     void state_transform(vector<double> &target_angels);
     void state_obs();
@@ -31,16 +32,18 @@ private:
     static double jointLinearInterpolation(double initPos, double targetPos, double rate);
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Publisher<unitree_go::msg::LowCmd>::SharedPtr cmd_puber_;
-    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr target_pos_puber_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr target_pos_puber_; // (这个用于调试，可以保留)
     rclcpp::Subscription<unitree_go::msg::LowState>::SharedPtr state_suber_;
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_suber_;
-    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr target_pos_suber_;
+    // !!!修改!!!: 2. 重命名订阅者变量
+    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr target_torque_suber_;
 
     unitree_go::msg::LowCmd cmd_msg_;
-    std_msgs::msg::Float32MultiArray pos_data_;
+    std_msgs::msg::Float32MultiArray pos_data_; // (用于调试)
     unitree_go::msg::MotorState motor[12];
     std_msgs::msg::Float32MultiArray torque_msg_;
-    std_msgs::msg::Float32MultiArray rl_target_pos_;
+    // !!!修改!!!: 3. 重命名数据存储变量
+    std_msgs::msg::Float32MultiArray rl_target_torques_;
     vector<int> sequence= {3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8};
 
     int rate_count_ = 0;
