@@ -57,11 +57,11 @@
 
 ### 🧩 Sim2Sim 模式
 
-`Sim2Sim` 模式需 **5 个终端**。  
+`Sim2Sim` 模式需 **4 个终端**。  
 在每个终端运行前，必须执行：
 
 ```bash
-source /opt/ros/<your_ros2_distro>/setup.bash
+source /opt/ros/foxy/setup.bash
 source install/setup.bash
 ```
 
@@ -80,12 +80,7 @@ ros2 run joy joy_node
 ros2 run deploy_rl_policy low_level_ctrl --ros-args -p is_simulation:=true
 ```
 
-#### 终端 4 — 启动速度估计器 (EKF)
-```bash
-ros2 run base_velocity_estimator ekf_velocity_estimator_node --ros-args -p is_simulation:=true
-```
-
-#### 终端 5 — 启动 SATA 策略节点 (Python)
+#### 终端 4 — 启动 SATA 策略节点 (Python)
 ```bash
 ros2 run deploy_rl_policy rl_policy.py --is_simulation True
 ```
@@ -108,7 +103,7 @@ ros2 run deploy_rl_policy rl_policy.py --is_simulation True
 
 在每个终端执行以下操作：
 ```bash
-source /opt/ros/<your_ros2_distro>/setup.bash
+source /opt/ros/foxy/setup.bash
 source ~/unitree_ros2/install/setup.bash
 source install/setup.bash
 ```
