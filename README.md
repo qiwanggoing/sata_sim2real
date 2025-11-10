@@ -1,4 +1,4 @@
-# 🦾 SATA Sim2Real: 在 Unitree Go2 上部署 SATA 力矩控制策略
+# SATA Sim2Real: 在 Unitree Go2 上部署 SATA 力矩控制策略
 
 本仓库是 [**glowing-torch/Deploy-an-RL-policy-on-the-Unitree-Go2-robot**](https://github.com/glowing-torch/Deploy-an-RL-policy-on-the-Unitree-Go2-robot) 项目的修改版。
 
@@ -7,7 +7,7 @@
 
 ---
 
-## 🚀 核心逻辑变更
+## 核心逻辑变更
 
 为实现端到端的 **力矩控制 (Torque Control)**，对原框架进行了以下关键修改：
 
@@ -35,7 +35,7 @@
 
 ---
 
-## ⚙️ 环境配置 (与原版一致)
+## 环境配置 (与原版一致)
 
 环境、编译与安装步骤与原仓库 **完全一致**。  
 请参考原版 [README.md](https://github.com/glowing-torch/Deploy-an-RL-policy-on-the-Unitree-Go2-robot) 的  
@@ -49,13 +49,13 @@
 | **Python** | 3.8 (Foxy) / 3.10 (Humble) |
 | **Pinocchio** | 3.4.0 |
 
-> ⚠️ **确保你已正确编译 `unitree_ros2` 驱动。**
+> **确保你已正确编译 `unitree_ros2` 驱动。**
 
 ---
 
-## 🧪 运行方式
+## 运行方式
 
-### 🧩 Sim2Sim 模式
+### Sim2Sim 模式
 
 `Sim2Sim` 模式需 **4 个终端**。  
 在每个终端运行前，必须执行：
@@ -84,18 +84,6 @@ ros2 run deploy_rl_policy low_level_ctrl --ros-args -p is_simulation:=true
 ```bash
 ros2 run deploy_rl_policy rl_policy.py --is_simulation True
 ```
-
----
-
-## ⚠️ 安全提示：部署到真实机器人 (Sim2Real)
-
-> **纯力矩控制 (Pure Torque Control)** 极易导致机器人摔倒！  
-> 仿真与现实之间的微小差异均可能导致 **不稳定或危险行为**。
-
-**安全守则：**
-1. **首次部署请悬挂机器人**：确保四足离地，避免摔倒风险。  
-2. **关闭运动服务 (Sport Mode)**：部署前必须关闭 Go2 的高级运动模式，否则高层控制会覆盖底层力矩命令。  
-3. **准备急停**：松开 **LB + RB** 即可立即退出力矩控制，恢复至安全的 PD 站立模式。
 
 ---
 
@@ -143,7 +131,7 @@ ros2 run deploy_rl_policy rl_policy.py --is_simulation False
 | **A** | 趴下 | PD 控制 |
 | **LB + RB** | 激活 SATA 力矩控制策略 | 力矩控制 |
 | **松开 LB + RB** | 退出 SATA 控制，恢复 PD 站立 | 安全模式 |
-
+| **X** | 立即切断所有电机的力矩 | 安全模式 |
 > 在 SATA 模式下：
 > - **左摇杆** 控制线速度  
 > - **右摇杆** 控制角速度
