@@ -192,7 +192,7 @@ def main():
         sys.exit(1)
 
     config = Go2Config()
-    policy_path = "/home/qiwang/sata_mujoco/legged_gym/logs/SATA/exported/policies/policy_1.pt" 
+    policy_path = "resources/policies/policy_1.pt" 
     
     if not os.path.exists(policy_path):
         print(f"错误: 找不到策略文件: {policy_path}")

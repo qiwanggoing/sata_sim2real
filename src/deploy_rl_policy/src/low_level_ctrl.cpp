@@ -104,24 +104,37 @@ void LowLevelControl::target_torque_callback(std_msgs::msg::Float32MultiArray::S
 
 void LowLevelControl::joy_callback(sensor_msgs::msg::Joy::SharedPtr msg)
 {
+    // !!! 新增 !!!: X 键 (buttons[2]) 触发 E-Stop
+    if (msg->buttons[2]) 
+    {
+        is_estop_ = true;
+        should_stand_ = false;
+        should_laydown_ = false;
+        should_run_policy_ = false;
+        RCLCPP_ERROR(this->get_logger(), "!!! E-STOP ACTIVATED !!!");
+        return; // E-Stop 优先于一切
+    }
     // ... (状态切换逻辑保持不变) ...
     if (is_laydown_ and msg->buttons[1]) // Button B
     {
         should_stand_ = true;
         should_laydown_ = false;
         should_run_policy_ = false;
+        is_estop_ = false; 
     }
     else if (is_standing_ and msg->buttons[0]) // Button A
     {
         should_laydown_ = true;
         should_stand_ = false;
         should_run_policy_ = false;
+        is_estop_ = false; 
     }
     else if (is_standing_ and msg->buttons[4] and msg->buttons[5]) // BUtton LB and Button RB
     {
         should_laydown_ = false;
         should_stand_ = false;
         should_run_policy_ = true;
+        is_estop_ = false; 
     }
 
     if (msg->axes[2]==-1 && msg->axes[5]==-1)
@@ -130,6 +143,23 @@ void LowLevelControl::joy_callback(sensor_msgs::msg::Joy::SharedPtr msg)
 
 void LowLevelControl::state_machine()
 {
+    // !!! 新增 !!!: E-Stop 具有最高优先级
+    if (is_estop_)
+    {
+        cout << "E-STOP active! Sending passive command." << endl;
+        for (int i = 0; i < 12; i++)
+        {
+            cmd_msg_.motor_cmd[i].mode = 0x00; // !!! 0x00 = 被动/阻尼 模式 !!!
+            cmd_msg_.motor_cmd[i].q = 0;
+            cmd_msg_.motor_cmd[i].kp = 0;
+            cmd_msg_.motor_cmd[i].dq = 0;
+            cmd_msg_.motor_cmd[i].kd = 0;
+            cmd_msg_.motor_cmd[i].tau = 0;
+        }
+        get_crc(cmd_msg_);
+        cmd_puber_->publish(cmd_msg_);
+        return; 
+    }
     state_obs();
     if (is_uncontrolled_ and !is_laydown_) // init pos: lay down
     {

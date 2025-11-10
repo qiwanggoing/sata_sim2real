@@ -55,6 +55,8 @@ private:
     bool should_laydown_ = false;
     bool should_stand_ = false;
     bool should_run_policy_=false;
+    // !!! 新增: E-Stop 标志 !!!
+    bool is_estop_ = false;
     bool is_simulation;
     vector<double> q_init_=vector<double>(12,0);
     vector<double> kp=vector<double>(12,0);
