@@ -62,6 +62,7 @@
 
 ```bash
 source /opt/ros/foxy/setup.bash
+source /home/qiwang/unitree_ros2/cyclonedds_ws/install/setup.bash
 source install/setup.bash
 ```
 
