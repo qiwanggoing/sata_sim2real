@@ -23,7 +23,9 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(pinocchio REQUIRED)
-
+# 1. 查找 Unitree 包
+find_package(unitree_go REQUIRED)
+find_package(unitree_api REQUIRED)
 # 添加节点
 # add_executable(imu_velocity_estimator_node src/imu_velocity_estimator_node.cpp)
 # ament_target_dependencies(imu_velocity_estimator_node
@@ -44,6 +46,9 @@ ament_target_dependencies(ekf_velocity_estimator_node
   rclcpp
   sensor_msgs
   geometry_msgs
+  std_msgs
+  unitree_go
+  unitree_api
 )
 target_include_directories(ekf_velocity_estimator_node PRIVATE
   ${pinocchio_INCLUDE_DIRS}

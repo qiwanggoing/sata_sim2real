@@ -1,6 +1,7 @@
 #pragma once
 #include "rclcpp/rclcpp.hpp"
-#include "sensor_msgs/msg/imu.hpp"
+// #include "sensor_msgs/msg/imu.hpp"
+#include "unitree_go/msg/low_state.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
@@ -14,14 +15,18 @@ public:
     void update(const Eigen::Vector3d &vel_obs);
     // ~imuVelocityEstimator();
 private:
-    void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
+    // void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
+    // 修改回调函数签名
+    void lowStateCallback(const unitree_go::msg::LowState::SharedPtr msg);
     void obsCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
     void calibrateBias();
     void publishVelocity();
     void contactDetector(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
     void updateForceBuffer(std::deque<float> &force_buffer, float new_value);
     bool isForceStable(std::deque<float> &force_buffer_);
-    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+    // rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+    // 修改订阅器类型
+    rclcpp::Subscription<unitree_go::msg::LowState>::SharedPtr lowstate_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr vel_obs_sub_;
 
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr contact_sub;
