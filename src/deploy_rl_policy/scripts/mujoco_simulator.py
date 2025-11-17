@@ -11,7 +11,8 @@ from xbox_command import XboxController # 假设 xbox_command 在同一目录
 from std_msgs.msg import Float32MultiArray
 import threading
 import time
-from geometry_msgs.msg import TwistStamped 
+from geometry_msgs.msg import TwistStamped
+
 project_root=Path(__file__).parents[4]
 
 class MujocoSimulator(Node):
@@ -106,7 +107,7 @@ class MujocoSimulator(Node):
             
             # Mujoco step
             mujoco.mj_step(self.m, self.d)  
-            
+            self.publish_sensor_data()
             # Sync Mujoco viewer
             self.viewer.sync()
             
@@ -139,14 +140,53 @@ class MujocoSimulator(Node):
         f4=self.d.sensordata[55+9:55+12]+[0,0,0]
         # Force.data=f1+f2+f3+f4
         # self.force_pub.publish(Force)
-        # !!! 在这里添加真值速度的发布 !!!
+        # !!! 修改开始: 真值速度发布 !!!
         gt_vel_msg = TwistStamped()
         gt_vel_msg.header.stamp = self.get_clock().now().to_msg()
-        # 从 qvel 获取基座线速度
-        gt_vel_msg.twist.linear.x = self.d.qvel[0]
-        gt_vel_msg.twist.linear.y = self.d.qvel[1]
-        gt_vel_msg.twist.linear.z = self.d.qvel[2]
+        gt_vel_msg.header.frame_id = "base_link" # 标记为机身坐标系
+        
+        # 1. 获取原始数据
+        world_vel = self.d.qvel[0:3]     # 世界系线速度
+        quat = self.d.qpos[3:7]          # 姿态四元数 [w, x, y, z]
+        
+        # 2. 执行坐标转换 (World -> Body)
+        body_vel = self.transform_world_to_body(world_vel, quat)
+        
+        # 3. 赋值 (注意: 这里的 x 是车头方向, y 是左侧方向)
+        gt_vel_msg.twist.linear.x = float(body_vel[0])
+        gt_vel_msg.twist.linear.y = float(body_vel[1])
+        gt_vel_msg.twist.linear.z = float(body_vel[2])
+        
+        # 4. 也可以顺便填充角速度 (虽然策略用的是 IMU 数据，但 GT 也可以发一下)
+        # 注意: MuJoCo 的 qvel[3:6] 对于自由关节通常是世界系角速度，但也需要转换
+        # 不过你的策略直接用的 IMU (imu_state.gyroscope), 这里可以保持 0 或者只发线速度
+        
+        self.gt_vel_pub.publish(gt_vel_msg)
     
+    @staticmethod
+    def transform_world_to_body(v, q):
+        """
+        将世界坐标系下的向量 v 旋转到机身坐标系。
+        q: 四元数 [w, x, y, z] (MuJoCo 格式)
+        v: 向量 [vx, vy, vz]
+        """
+        # 提取四元数分量
+        w, x, y, z = q
+        
+        # 我们需要旋转 q 的逆（共轭），因为 q 表示从机身到世界的旋转
+        # 对于单位四元数，逆就是 [w, -x, -y, -z]
+        x, y, z = -x, -y, -z
+        
+        # 使用 Rodrigues 旋转公式的高效实现: v' = v + 2 * r x (r x v + w * v)
+        # 其中 r 是四元数的向量部分 (x, y, z)
+        q_vec = np.array([x, y, z], dtype=np.float32)
+        v_vec = np.array(v, dtype=np.float32)
+        
+        t = 2.0 * np.cross(q_vec, v_vec)
+        v_body = v_vec + w * t + np.cross(q_vec, t)
+        
+        return v_body
+
     @staticmethod
     def pd_control(target_q, q, kp, dq, kd):
         """Calculates torques from position commands"""

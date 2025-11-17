@@ -228,15 +228,25 @@ class dataReciever(Node):
         
     @staticmethod
     def get_gravity_orientation(quaternion):
-        # ... (SATA 重力向量计算不变) ...
-        qw, qx, qy, qz = quaternion[0], quaternion[1], quaternion[2], quaternion[3]
+        # MuJoCo 的四元数顺序通常是 [w, x, y, z]
+        qw = quaternion[0]
+        qx = quaternion[1]
+        qy = quaternion[2]
+        qz = quaternion[3]
+        
+        # 世界坐标系下的重力向量 [0, 0, -1]
         gravity_vec = np.array([0., 0., -1.], dtype=np.float32)
-        q_calc = np.array([qx, qy, qz, qw], dtype=np.float32)
-        w, x, y, z = q_calc[3], q_calc[0], q_calc[1], q_calc[2]
-        qv = np.array([x, y, z], dtype=np.float32)
+        
+        # !!! 核心修改 !!! 
+        # 使用共轭四元数 [w, -x, -y, -z] 来进行逆旋转 (World -> Body)
+        # 也就是将 x, y, z 取反
+        qv = np.array([-qx, -qy, -qz], dtype=np.float32) 
+        
+        # 下面的公式保持不变，但因为 qv 变了，计算结果就是逆旋转了
         uv = np.cross(qv, gravity_vec)
         uuv = np.cross(qv, uv)
-        projected_gravity = gravity_vec + 2 * (w * uv + uuv)
+        projected_gravity = gravity_vec + 2 * (qw * uv + uuv)
+        
         return projected_gravity
 
     
