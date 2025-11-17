@@ -70,9 +70,15 @@ class dataReciever(Node):
             print("reading data from reality")
 
         # !!! 新增 !!!: 订阅 EKF 速度估计
+        # self.velocity_sub = self.create_subscription(
+        #     TwistStamped,
+        #     "/ekf/velocity", # EKF 节点发布的话题
+        #     self.velocity_callback,
+        #     10)
+        # !!! 修改 !!!: 订阅 MuJoCo 的真值速度
         self.velocity_sub = self.create_subscription(
             TwistStamped,
-            "/ekf/velocity", # EKF 节点发布的话题
+            "/mujoco/ground_truth_velocity", # <--- 改成 MuJoCo 发布的
             self.velocity_callback,
             10)
 
@@ -127,17 +133,71 @@ class dataReciever(Node):
         quat = self.low_state.imu_state.quaternion
         ang_vel = np.array(self.low_state.imu_state.gyroscope, dtype=np.float32)
         
+        # === 修改开始: 新的控制逻辑 ===
         self.cmd = np.zeros(3)
-        self.left_button, self.right_button=self.cmd_sub.is_pressed()
-        if self.left_button and self.right_button:
-            linear_x, linear_y = self.cmd_sub.get_left_stick()
-            angular_z = self.cmd_sub.get_right_stick()
-            self.cmd = 0.7 * np.array([linear_x, linear_y, angular_z])
+        self.left_button, self.right_button = self.cmd_sub.is_pressed()
+        
+        if self.left_button and self.right_button: # LB + RB 激活策略
+            # 1. 获取原始摇杆数据
+            raw_lx, raw_ly = self.cmd_sub.get_left_stick() # x:前进后退, y:左右
+            raw_az = self.cmd_sub.get_right_stick()        # 转向
+            
+            # 2. 定义速度档位 (默认 0.5)
+            # 使用成员变量来存储当前档位，防止每帧重置 (需要在 __init__ 里初始化 self.target_speed = 0.5)
+            # 这里为了简单，我们通过按住按键来临时改变，或者默认 0.5
+            
+            current_speed_level = 0.5 # 默认速度
+            
+            # 检查按键 (需要确保 xbox_command.py 暴露了 buttons)
+            # 假设 X键(index 2) 是 0.3 m/s, Y键(index 3) 是 0.8 m/s
+            if hasattr(self.cmd_sub, 'buttons') and len(self.cmd_sub.buttons) > 3:
+                if self.cmd_sub.buttons[2]: # X 键
+                    current_speed_level = 0.3
+                    print("Speed Limit: 0.3 m/s")
+                elif self.cmd_sub.buttons[3]: # Y 键
+                    current_speed_level = 0.8
+                    print("Speed Limit: 0.8 m/s")
+            
+            # 3. 计算方向 (归一化)
+            # 计算摇杆推力大小
+            magnitude = np.sqrt(raw_lx**2 + raw_ly**2)
+            
+            target_vx = 0.0
+            target_vy = 0.0
+            
+            # 死区检查 (防止漂移)
+            if magnitude > 0.1: 
+                # 归一化方向向量
+                dir_x = raw_lx / magnitude
+                dir_y = raw_ly / magnitude
+                
+                # 应用恒定速度
+                target_vx = dir_x * current_speed_level
+                target_vy = dir_y * current_speed_level
+            
+            # 4. 转向处理 (通常转向保留线性控制比较好，或者也给个固定速度)
+            target_wz = raw_az * 1.0 # 转向还是保留手感比较好
+            
+            # 5. 赋值给 cmd (注意缩放)
+            # 注意: 原始代码里最后乘以了 self.config.cmd_scale
+            # SATA 的 cmd scale 是 [2.0, 2.0, 0.25]
+            # 这里的 self.cmd 是 "真实物理单位" (m/s)，之后在构建 obs 时会乘 scale
+            
+            # ！！！重要修正！！！
+            # 原代码中 self.cmd = 0.7 * np.array(...) 
+            # 这个 0.7 是一个全局缩放。
+            # 我们现在直接给真实物理值，所以去掉这个模糊的 0.7，直接给 target_vx
+            
+            self.cmd = np.array([target_vx, target_vy, target_wz])
+            
+            # 打印当前指令以便调试
+            # print(f"CMD: v={current_speed_level}, x={target_vx:.2f}, y={target_vy:.2f}")
         
         gravity_orientation = self.get_gravity_orientation(quat)
         
         # !!! 修复 2 !!!: 使用 EKF 的线速度
         obs_lin_vel = self.base_lin_vel * self.config.OBS_SCALES.lin_vel
+        # obs_lin_vel = np.zeros(3, dtype=np.float32) # <--- 强制将线速度观测值设为 [0, 0, 0]
         obs_ang_vel = ang_vel * self.config.OBS_SCALES.ang_vel
         obs_dof_pos = (qj_policy - self.default_dof_pos_policy_order) * self.config.OBS_SCALES.dof_pos
         obs_dof_vel = dqj_policy * self.config.OBS_SCALES.dof_vel
@@ -192,7 +252,7 @@ def main():
         sys.exit(1)
 
     config = Go2Config()
-    policy_path = "resources/policies/policy_1.pt" 
+    policy_path = "/home/qiwang/SATA/legged_gym/logs/SATA/exported/policies/policy_1.pt" 
     
     if not os.path.exists(policy_path):
         print(f"错误: 找不到策略文件: {policy_path}")

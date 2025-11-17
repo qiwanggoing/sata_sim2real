@@ -11,7 +11,7 @@ from xbox_command import XboxController # 假设 xbox_command 在同一目录
 from std_msgs.msg import Float32MultiArray
 import threading
 import time
-from std_msgs.msg import Float32MultiArray
+from geometry_msgs.msg import TwistStamped 
 project_root=Path(__file__).parents[4]
 
 class MujocoSimulator(Node):
@@ -23,6 +23,9 @@ class MujocoSimulator(Node):
         self.force_pub=self.create_publisher(Float32MultiArray,"/mujoco/force",10)
         self.torque_pub=self.create_publisher(Float32MultiArray,"/mujoco/torque",10)
         
+        # !!! 在这里添加新的发布者 !!!
+        self.gt_vel_pub = self.create_publisher(TwistStamped, "/mujoco/ground_truth_velocity", 10)
+
         # !!!修改!!!: 订阅 /mujoco/lowcmd (回调函数将被修改)
         self.target_torque_suber=self.create_subscription(LowCmd,"/mujoco/lowcmd",self.target_torque_callback,10)
 
@@ -136,6 +139,13 @@ class MujocoSimulator(Node):
         f4=self.d.sensordata[55+9:55+12]+[0,0,0]
         # Force.data=f1+f2+f3+f4
         # self.force_pub.publish(Force)
+        # !!! 在这里添加真值速度的发布 !!!
+        gt_vel_msg = TwistStamped()
+        gt_vel_msg.header.stamp = self.get_clock().now().to_msg()
+        # 从 qvel 获取基座线速度
+        gt_vel_msg.twist.linear.x = self.d.qvel[0]
+        gt_vel_msg.twist.linear.y = self.d.qvel[1]
+        gt_vel_msg.twist.linear.z = self.d.qvel[2]
     
     @staticmethod
     def pd_control(target_q, q, kp, dq, kd):
