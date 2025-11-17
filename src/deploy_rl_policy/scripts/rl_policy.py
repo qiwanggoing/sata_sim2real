@@ -84,7 +84,7 @@ class dataReciever(Node):
 
         self.get_logger().info("Waiting for data")
         
-        # 200Hz (0.005s) 定时器
+        # 200Hz (0.005s) 运行策略
         self.timer = self.create_timer(0.005, self.run) 
         
         self.target_torque_puber=self.create_publisher(Float32MultiArray,"/rl/target_torques",10)
