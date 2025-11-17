@@ -115,19 +115,21 @@ void LowLevelControl::joy_callback(sensor_msgs::msg::Joy::SharedPtr msg)
         return; // E-Stop 优先于一切
     }
     // ... (状态切换逻辑保持不变) ...
-    if (is_laydown_ and msg->buttons[1]) // Button B
+    if (is_laydown_ and msg->buttons[7]) 
     {
         should_stand_ = true;
         should_laydown_ = false;
         should_run_policy_ = false;
-        is_estop_ = false; 
+        is_estop_ = false;
+        RCLCPP_INFO(this->get_logger(), "Standing Up...");
     }
-    else if (is_standing_ and msg->buttons[0]) // Button A
+    else if (msg->buttons[0]) // Button A
     {
         should_laydown_ = true;
         should_stand_ = false;
         should_run_policy_ = false;
         is_estop_ = false; 
+        RCLCPP_INFO(this->get_logger(), "Resetting to Laydown...");
     }
     else if (is_standing_ and msg->buttons[4] and msg->buttons[5]) // BUtton LB and Button RB
     {

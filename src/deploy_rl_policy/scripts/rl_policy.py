@@ -89,6 +89,11 @@ class dataReciever(Node):
         
         self.target_torque_puber=self.create_publisher(Float32MultiArray,"/rl/target_torques",10)
 
+        # !!! 新增: 速度控制状态变量 !!!
+        self.target_speed_level = 0.2  # 初始速度设为 0.2 m/s
+        self.last_y_state = 0          # 记录 Y 键上一帧状态
+        self.last_b_state = 0          # 记录 B 键上一帧状态
+
     # !!! 新增 !!!: EKF 速度回调
     def velocity_callback(self, msg: TwistStamped):
         self.base_lin_vel[0] = msg.twist.linear.x
@@ -133,65 +138,56 @@ class dataReciever(Node):
         quat = self.low_state.imu_state.quaternion
         ang_vel = np.array(self.low_state.imu_state.gyroscope, dtype=np.float32)
         
-        # === 修改开始: 新的控制逻辑 ===
         self.cmd = np.zeros(3)
         self.left_button, self.right_button = self.cmd_sub.is_pressed()
         
         if self.left_button and self.right_button: # LB + RB 激活策略
-            # 1. 获取原始摇杆数据
-            raw_lx, raw_ly = self.cmd_sub.get_left_stick() # x:前进后退, y:左右
-            raw_az = self.cmd_sub.get_right_stick()        # 转向
+            # 1. 获取原始摇杆数据 (方向)
+            raw_lx, raw_ly = self.cmd_sub.get_left_stick()
+            raw_az = self.cmd_sub.get_right_stick()
             
-            # 2. 定义速度档位 (默认 0.5)
-            # 使用成员变量来存储当前档位，防止每帧重置 (需要在 __init__ 里初始化 self.target_speed = 0.5)
-            # 这里为了简单，我们通过按住按键来临时改变，或者默认 0.5
-            
-            current_speed_level = 0.5 # 默认速度
-            
-            # 检查按键 (需要确保 xbox_command.py 暴露了 buttons)
-            # 假设 X键(index 2) 是 0.3 m/s, Y键(index 3) 是 0.8 m/s
+            # 2. 速度档位控制 (Y键加速, B键减速)
+            # 确保 xbox_command.py 已经修改并暴露了 self.buttons
             if hasattr(self.cmd_sub, 'buttons') and len(self.cmd_sub.buttons) > 3:
-                if self.cmd_sub.buttons[2]: # X 键
-                    current_speed_level = 0.3
-                    print("Speed Limit: 0.3 m/s")
-                elif self.cmd_sub.buttons[3]: # Y 键
-                    current_speed_level = 0.8
-                    print("Speed Limit: 0.8 m/s")
-            
-            # 3. 计算方向 (归一化)
-            # 计算摇杆推力大小
+                # --- 处理 Y 键 (Index 3): 加速 ---
+                current_y_state = self.cmd_sub.buttons[3]
+                # 检测上升沿 (从0变1的瞬间)
+                if current_y_state == 1 and self.last_y_state == 0: 
+                    self.target_speed_level += 0.1
+                    print(f"Speed UP: {self.target_speed_level:.1f} m/s")
+                self.last_y_state = current_y_state # 更新状态
+                
+                # --- 处理 B 键 (Index 1): 减速 ---
+                current_b_state = self.cmd_sub.buttons[1]
+                # 检测上升沿
+                if current_b_state == 1 and self.last_b_state == 0: 
+                    self.target_speed_level -= 0.1
+                    if self.target_speed_level < 0.0: 
+                        self.target_speed_level = 0.0 # 防止速度变为负数
+                    print(f"Speed DOWN: {self.target_speed_level:.1f} m/s")
+                self.last_b_state = current_b_state # 更新状态
+
+            # 3. 计算最终指令 (归一化方向 * 设定速度)
             magnitude = np.sqrt(raw_lx**2 + raw_ly**2)
-            
             target_vx = 0.0
             target_vy = 0.0
             
-            # 死区检查 (防止漂移)
+            # 设置死区，防止摇杆漂移导致机器人缓慢蠕动
             if magnitude > 0.1: 
-                # 归一化方向向量
+                # 归一化方向向量 (Direction Vector)
                 dir_x = raw_lx / magnitude
                 dir_y = raw_ly / magnitude
                 
-                # 应用恒定速度
-                target_vx = dir_x * current_speed_level
-                target_vy = dir_y * current_speed_level
+                # 应用当前设定的速度档位
+                target_vx = dir_x * self.target_speed_level
+                target_vy = dir_y * self.target_speed_level
             
-            # 4. 转向处理 (通常转向保留线性控制比较好，或者也给个固定速度)
-            target_wz = raw_az * 1.0 # 转向还是保留手感比较好
-            
-            # 5. 赋值给 cmd (注意缩放)
-            # 注意: 原始代码里最后乘以了 self.config.cmd_scale
-            # SATA 的 cmd scale 是 [2.0, 2.0, 0.25]
-            # 这里的 self.cmd 是 "真实物理单位" (m/s)，之后在构建 obs 时会乘 scale
-            
-            # ！！！重要修正！！！
-            # 原代码中 self.cmd = 0.7 * np.array(...) 
-            # 这个 0.7 是一个全局缩放。
-            # 我们现在直接给真实物理值，所以去掉这个模糊的 0.7，直接给 target_vx
-            
+            # 4. 转向处理 (转向通常保留线性控制手感会更好)
+            # 如果你也想固定转向速度，可以像上面一样处理，但建议保留线性
+            target_wz = raw_az * 1.0 
+
+            # 5. 赋值给 self.cmd
             self.cmd = np.array([target_vx, target_vy, target_wz])
-            
-            # 打印当前指令以便调试
-            # print(f"CMD: v={current_speed_level}, x={target_vx:.2f}, y={target_vy:.2f}")
         
         gravity_orientation = self.get_gravity_orientation(quat)
         
