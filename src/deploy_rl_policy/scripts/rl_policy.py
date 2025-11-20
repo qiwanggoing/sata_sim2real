@@ -70,17 +70,17 @@ class dataReciever(Node):
             print("reading data from reality")
 
         # !!! 新增 !!!: 订阅 EKF 速度估计
-        # self.velocity_sub = self.create_subscription(
-        #     TwistStamped,
-        #     "/ekf/velocity", # EKF 节点发布的话题
-        #     self.velocity_callback,
-        #     10)
-        # !!! 修改 !!!: 订阅 MuJoCo 的真值速度
         self.velocity_sub = self.create_subscription(
             TwistStamped,
-            "/mujoco/ground_truth_velocity", # <--- 改成 MuJoCo 发布的
+            "/ekf/velocity", # EKF 节点发布的话题
             self.velocity_callback,
             10)
+        # !!! 修改 !!!: 订阅 MuJoCo 的真值速度
+        # self.velocity_sub = self.create_subscription(
+        #     TwistStamped,
+        #     "/mujoco/ground_truth_velocity", # <--- 改成 MuJoCo 发布的
+        #     self.velocity_callback,
+        #     10)
 
         self.get_logger().info("Waiting for data")
         

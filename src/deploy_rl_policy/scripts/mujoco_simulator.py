@@ -128,6 +128,10 @@ class MujocoSimulator(Node):
             low_state_msg.motor_state[i].dq=self.d.qvel[6+i]
         low_state_msg.imu_state.quaternion=self.d.qpos[3:7].astype(np.float32)
         low_state_msg.imu_state.gyroscope=self.d.sensordata[40:43].astype(np.float32)
+        # !!! 新增: 填充加速度计数据 !!!
+        # 注意: d.sensordata[43:46] 对应 xml 中的 accelerometer 传感器
+        low_state_msg.imu_state.accelerometer = self.d.sensordata[43:46].astype(np.float32)
+        
         self.low_state_puber.publish(low_state_msg)
         pos=Float32MultiArray()
         pos.data=self.d.qpos[:19].tolist()
