@@ -41,6 +41,7 @@ install(PROGRAMS
   scripts/config.py
   scripts/mujoco_simulator.py
   scripts/record_torque.py
+  scripts/keyboard_teleop.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
