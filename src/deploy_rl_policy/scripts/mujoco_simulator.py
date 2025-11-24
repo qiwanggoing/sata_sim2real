@@ -30,6 +30,14 @@ class MujocoSimulator(Node):
         # !!!修改!!!: 订阅 /mujoco/lowcmd (回调函数将被修改)
         self.target_torque_suber=self.create_subscription(LowCmd,"/mujoco/lowcmd",self.target_torque_callback,10)
 
+        # !!! [新增] 直接订阅 RL 输出的纯力矩 !!!
+        self.rl_torque_sub = self.create_subscription(
+            Float32MultiArray, 
+            "/rl/target_torques", 
+            self.rl_torque_callback, 
+            10
+        )
+
         self.step_counter = 0
         self.xml_path=project_root/"resources"/"go2"/"scene_terrain.xml"
         
@@ -89,7 +97,17 @@ class MujocoSimulator(Node):
         
         # 将计算好的力矩赋给 self.tau (供仿真线程使用)
         self.tau = temp_tau
+    
+    # !!! [新增] 处理纯力矩的回调函数 !!!
+    def rl_torque_callback(self, msg: Float32MultiArray):
+        self.recieve_data = True # 标记已收到数据，开始仿真步进
         
+        # 确保数据长度正确 (12个关节)
+        if len(msg.data) == 12:
+            self.tau = list(msg.data)
+        else:
+            self.get_logger().warn(f"Received torque data with wrong length: {len(msg.data)}")
+            
     # !!!删除!!!: update_tau 方法
     
     def step_simulation(self):

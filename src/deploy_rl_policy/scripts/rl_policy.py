@@ -21,7 +21,7 @@ from geometry_msgs.msg import TwistStamped
 project_root=Path(__file__).parents[4]
 
 class dataReciever(Node):
-    def __init__(self,config:Go2Config, policy: RLPolicy, simulation: bool):
+    def __init__(self,config:Go2Config, policy: RLPolicy, simulation: bool, use_ground_truth: bool = False):
         super().__init__("data_reciever")
         self.config = config
         self.policy = policy
@@ -69,18 +69,34 @@ class dataReciever(Node):
             self.low_state_sub=self.create_subscription(LowState,"/lowstate",self.low_state_callback,10) 
             print("reading data from reality")
 
-        # !!! 新增 !!!: 订阅 EKF 速度估计
-        self.velocity_sub = self.create_subscription(
-            TwistStamped,
-            "/ekf/velocity", # EKF 节点发布的话题
-            self.velocity_callback,
-            10)
-        # !!! 修改 !!!: 订阅 MuJoCo 的真值速度
+        # # !!! 新增 !!!: 订阅 EKF 速度估计
         # self.velocity_sub = self.create_subscription(
         #     TwistStamped,
-        #     "/mujoco/ground_truth_velocity", # <--- 改成 MuJoCo 发布的
+        #     "/ekf/velocity", # EKF 节点发布的话题
         #     self.velocity_callback,
         #     10)
+        # # !!! 修改 !!!: 订阅 MuJoCo 的真值速度
+        # # self.velocity_sub = self.create_subscription(
+        # #     TwistStamped,
+        # #     "/mujoco/ground_truth_velocity", # <--- 改成 MuJoCo 发布的
+        # #     self.velocity_callback,
+        # #     10)
+        if simulation and use_ground_truth:
+            self.get_logger().warn("USING GROUND TRUTH VELOCITY (GOD MODE)")
+            # 订阅仿真器直接发布的真值
+            self.velocity_sub = self.create_subscription(
+                TwistStamped,
+                "/mujoco/ground_truth_velocity", 
+                self.velocity_callback,
+                10)
+        else:
+            self.get_logger().info("Using EKF Estimated Velocity")
+            # 订阅 EKF 估计值 (真机或仿真默认)
+            self.velocity_sub = self.create_subscription(
+                TwistStamped,
+                "/ekf/velocity", 
+                self.velocity_callback,
+                10)
 
         self.get_logger().info("Waiting for data")
         
@@ -269,10 +285,12 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--is_simulation', type=str, choices=["True", "False"], default="True")
+    parser.add_argument('--use_ground_truth', action='store_true', help="Use ground truth velocity from simulation instead of EKF")
     args = parser.parse_args()
     simulation = args.is_simulation == "True"
+    use_ground_truth = args.use_ground_truth
     
-    reciever_node=dataReciever(config=config, policy=policy, simulation=simulation)
+    reciever_node=dataReciever(config=config, policy=policy, simulation=simulation, use_ground_truth=use_ground_truth)
     rclpy.spin(reciever_node)
     reciever_node.destroy_node()
     rclpy.shutdown()
