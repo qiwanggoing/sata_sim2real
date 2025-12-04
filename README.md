@@ -55,71 +55,69 @@
 
 ## 运行方式
 
-### Sim2Sim 模式 (MuJoCo 仿真)
+## 运行方式
 
-`Sim2Sim` 模式使用 **3 个终端**。  
-在每个终端运行任何指令之前，必须执行：
+### 🚀 运行指令 (Sim & Real)
 
-```bash
-source /opt/ros/foxy/setup.bash
-source /home/qiwang/unitree_ros2/cyclonedds_ws/install/setup.bash
-source install/setup.bash
-```
+为了实现完整的系统验证和部署，请统一采用**4 个终端**的流程。这个流程同时适用于 MuJoCo 仿真环境和真实机器人。
 
-#### 终端 1 — 启动 MuJoCo 仿真器
-```bash
-ros2 run deploy_rl_policy mujoco_simulator.py
-```
-
-#### 终端 2 — 启动手柄驱动 (Joystick)
-```bash
-ros2 run joy joy_node
-```
-
-#### 3 — 启动 SATA 策略节点 (Python)
-```bash
-ros2 run deploy_rl_policy rl_policy.py --use_velocity_estimator --is_simulation True
-```
-
----
-
-### 🚘 Sim2Real 模式运行指令
-
-在每个终端执行以下操作：
+在每个终端运行任何指令之前，必须加载环境（请根据你的实际路径调整 `~/unitree_ros2`）：
 ```bash
 source /opt/ros/foxy/setup.bash
 source ~/unitree_ros2/install/setup.bash
 source install/setup.bash
 ```
 
-#### 终端 1 — 启动真实机器人驱动 (替代 MuJoCo)
-```bash
-ros2 launch unitree_ros2_examples go2_base.launch.py
-```
+#### 终端 1 — 启动机器人驱动 (或仿真器)
 
-#### 终端 2 — 启动 XBox 手柄
+*   **仿真环境 (MuJoCo):**
+    启动 MuJoCo 仿真器，它将模拟机器人硬件并发布 `lowstate`。
+    ```bash
+    ros2 run deploy_rl_policy mujoco_simulator.py
+    ```
+
+*   **真实机器人:**
+    连接机器人底层 UDP 接口，发布 `/lowstate` 并接收 `/lowcmd`。
+    ```bash
+    ros2 launch unitree_ros2_examples go2_base.launch.py
+    ```
+
+#### 终端 2 — 启动手柄驱动 (Joystick)
 ```bash
 ros2 run joy joy_node
 ```
 
-#### 终端 3 — 启动状态机 (C++) (Real 模式)
-```bash
-ros2 run deploy_rl_policy low_level_ctrl --ros-args -p is_simulation:=false
-```
+#### 终端 3 — 启动底层控制桥接 (C++)
 
-#### 终端 4 — 启动 EKF 速度估计器 (Real 模式)
-```bash
-ros2 run base_velocity_estimator ekf_velocity_estimator_node --ros-args -p is_simulation:=false
-```
+**关键节点**：负责状态机管理（如站立/趴下）、急停逻辑，以及将 RL 策略计算的力矩 (`/rl/target_torques`) 转换为机器人驱动可接收的 `LowCmd` 指令。
 
-#### 终端 5 — 启动 SATA 策略节点 (Python) (Real 模式)
-```bash
-ros2 run deploy_rl_policy rl_policy.py --is_simulation False
-```
+*   **仿真环境:**
+    ```bash
+    ros2 run deploy_rl_policy low_level_ctrl --ros-args -p is_simulation:=true
+    ```
+
+*   **真实机器人:**
+    ```bash
+    ros2 run deploy_rl_policy low_level_ctrl --ros-args -p is_simulation:=false
+    ```
+
+#### 终端 4 — 启动 SATA 策略 (Python)
+
+加载 LSTM 估计器，运行 RL 策略生成控制力矩。
+
+*   **仿真环境:**
+    ```bash
+    ros2 run deploy_rl_policy rl_policy.py --use_velocity_estimator --is_simulation True
+    ```
+
+*   **真实机器人:**
+    ```bash
+    ros2 run deploy_rl_policy rl_policy.py --use_velocity_estimator --is_simulation False
+    ```
 
 ---
 
-## 🎮 手柄控制逻辑 (基本不变)
+## 🎮 手柄控制逻辑
 
 | 按键 | 功能 | 控制模式 |
 |------|------|-----------|

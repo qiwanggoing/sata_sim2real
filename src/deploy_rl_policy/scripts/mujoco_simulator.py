@@ -30,13 +30,13 @@ class MujocoSimulator(Node):
         # !!!修改!!!: 订阅 /mujoco/lowcmd (回调函数将被修改)
         self.target_torque_suber=self.create_subscription(LowCmd,"/mujoco/lowcmd",self.target_torque_callback,10)
 
-        # !!! [新增] 直接订阅 RL 输出的纯力矩 !!!
-        self.rl_torque_sub = self.create_subscription(
-            Float32MultiArray, 
-            "/rl/target_torques", 
-            self.rl_torque_callback, 
-            10
-        )
+        # !!! [已禁用] 直接订阅 RL 输出的纯力矩 (避免与 low_level_ctrl 冲突) !!!
+        # self.rl_torque_sub = self.create_subscription(
+        #     Float32MultiArray, 
+        #     "/rl/target_torques", 
+        #     self.rl_torque_callback, 
+        #     10
+        # )
 
         self.step_counter = 0
         self.xml_path=project_root/"resources"/"go2"/"scene_terrain.xml"
