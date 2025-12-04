@@ -11,15 +11,12 @@ from sensor_msgs.msg import Joy
 # 模拟 LB(4) + RB(5) 同时按下，用于激活策略
 ENABLE_KEY = 'o' 
 
-# 运动控制
-MOVE_BINDINGS = {
-    'w': (1, 0, 0),  # 前 (Lin X+)
-    's': (-1, 0, 0), # 后 (Lin X-)
-    'a': (0, 1, 0),  # 左 (Lin Y+)
-    'd': (0, -1, 0), # 右 (Lin Y-)
-    'q': (0, 0, 1),  # 左转 (Ang Z+)
-    'e': (0, 0, -1), # 右转 (Ang Z-)
-}
+import time # Added import
+
+# 运动控制参数
+MAX_LIN_VEL = 0.4
+MAX_ANG_VEL = 0.8
+STOP_DELAY = 0.2 # 停车防抖时间 (秒)
 
 # 速度档位控制 (模拟 Y 和 B 键)
 SPEED_BINDINGS = {
@@ -28,7 +25,9 @@ SPEED_BINDINGS = {
 }
 
 STOP_KEY = 'x'
+SPACE_KEY = ' '
 CTRL_C_KEY = '\x03'
+ENABLE_KEY = 'o'
 
 class KeyboardJoystick(Node):
     def __init__(self):
@@ -42,6 +41,8 @@ class KeyboardJoystick(Node):
         self.y_val = 0.0
         self.z_val = 0.0
         
+        self.last_key_time = time.time() # 上次按键时间
+        
         # 按键触发器 (用于模拟按一下松开)
         self.button_triggers = {1: 0, 3: 0} 
 
@@ -50,20 +51,21 @@ class KeyboardJoystick(Node):
 
     def get_instructions(self):
         return """
-        ---------- 键盘控制面板 (Sim2Sim) ----------
+        ---------- 键盘控制面板 (Sim2Sim 优化版) ----------
         
         【状态控制】
         o : 切换 激活/待机 (对应手柄 LB + RB)
-        x : 立即停止并归零
+        x / 空格 : 立即停止
         
-        【移动控制】
-        w/s : 前/后
-        a/d : 左/右
-        q/e : 转向
+        【移动控制 (按住不放)】
+        w/s : 前进 / 后退 (松开 Q/E 可恢复直行)
+        a/d : 左移 / 右移
+        q/e : 转向 (可在按住 W/S 时叠加转向)
         
-        【速度档位】
-        i : 加速 (对应 Y 键)
-        k : 减速 (对应 B 键)
+        【说明】
+        - 按住 W + Q : 边走边转
+        - 松开 Q (保持 W) : 恢复直行
+        - 全部松开 : 停止
         
         CTRL-C : 退出
         ------------------------------------------
@@ -94,30 +96,46 @@ class KeyboardJoystick(Node):
             status = "激活 (Active)" if self.enabled else "待机 (Standby)"
             print(f"模式切换: {status}")
             
-        elif key == STOP_KEY:
+        elif key == STOP_KEY or key == SPACE_KEY:
             self.x_val = 0.0
             self.y_val = 0.0
             self.z_val = 0.0
             print("停止指令!")
 
-        elif key in MOVE_BINDINGS:
-            # 简单的平滑处理：按下方向键增加数值，否则慢慢归零（可选，这里简化为直接赋值）
-            vx, vy, vz = MOVE_BINDINGS[key]
-            self.x_val = float(vx)
-            self.y_val = float(vy)
-            self.z_val = float(vz)
-        
+        # --- 移动逻辑优化 ---
+        elif key in ['w', 's']:
+            self.last_key_time = time.time() # 更新活跃时间
+            self.x_val = MAX_LIN_VEL if key == 'w' else -MAX_LIN_VEL
+            self.y_val = 0.0
+            self.z_val = 0.0
+            
+        elif key in ['a', 'd']:
+            self.last_key_time = time.time() # 更新活跃时间
+            self.y_val = MAX_LIN_VEL if key == 'a' else -MAX_LIN_VEL
+            self.x_val = 0.0
+            self.z_val = 0.0
+            
+        elif key in ['q', 'e']:
+            self.last_key_time = time.time() # 更新活跃时间
+            self.z_val = MAX_ANG_VEL if key == 'q' else -MAX_ANG_VEL
+            # 保留 X/Y
+            
         elif key in SPEED_BINDINGS:
+            self.last_key_time = time.time()
             idx = SPEED_BINDINGS[key]
-            self.button_triggers[idx] = 1 # 标记按下
+            self.button_triggers[idx] = 1 
             print(f"触发功能键: {key}")
             
         else:
-            # 如果没有按方向键，自动归零 (模拟摇杆回中)
+            # 无按键 (松开)：带延迟的归零
             if key == '': 
-                self.x_val = 0.0
-                self.y_val = 0.0
-                self.z_val = 0.0
+                if (time.time() - self.last_key_time) > STOP_DELAY:
+                    self.x_val = 0.0
+                    self.y_val = 0.0
+                    self.z_val = 0.0
+                # 否则保持最后的速度 (防抖)
+
+
         
         # 3. 构建 Joy 消息 (伪装成 Xbox 手柄)
         msg = Joy()

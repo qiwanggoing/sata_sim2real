@@ -42,6 +42,9 @@ install(PROGRAMS
   scripts/mujoco_simulator.py
   scripts/record_torque.py
   scripts/keyboard_teleop.py
+  scripts/estimator.py
+  scripts/sata_config.py
+  scripts/sata_policy_loader.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -20,18 +20,28 @@ from geometry_msgs.msg import TwistStamped
 
 project_root=Path(__file__).parents[4]
 
+# a new import
+try:
+    from estimator import VelocityEstimator 
+except ImportError:
+    print("错误: 无法导入 'estimator.VelocityEstimator'。")
+    print("请确保 estimator.py 在 src/deploy_rl_policy/scripts/ 目录下。")
+    sys.exit(1)
+import collections
+
 class dataReciever(Node):
-    def __init__(self,config:Go2Config, policy: RLPolicy, simulation: bool, use_ground_truth: bool = False):
+    def __init__(self,config:Go2Config, policy: RLPolicy, simulation: bool, use_ground_truth: bool = False, use_velocity_estimator: bool = False):
         super().__init__("data_reciever")
         self.config = config
         self.policy = policy
         self.cmd_sub=XboxController(self)
+        self.use_velocity_estimator=use_velocity_estimator
         
-        # ... (SATA 状态变量初始化不变) ...
         self.num_actions = 12
         self.last_torques = np.zeros(self.num_actions, dtype=np.float32)
         self.motor_fatigue = np.zeros(self.num_actions, dtype=np.float32)
         self.activation_sign = np.zeros(self.num_actions, dtype=np.float32)
+        self.dof_vel_limits = np.full(self.num_actions, self.config.DOF_VEL_LIMITS, dtype=np.float32)
         self.dof_vel_limits = np.full(self.num_actions, self.config.DOF_VEL_LIMITS, dtype=np.float32)
         self.torque_limits = np.full(self.num_actions, self.config.TORQUE_LIMITS, dtype=np.float32)
         self.GAMMA = self.config.GAMMA 
@@ -43,16 +53,26 @@ class dataReciever(Node):
             self.config.COMMANDS_SCALES.ang_vel_yaw
         ], dtype=np.float32)
         
-        # ... (观测和动作变量初始化不变) ...
         self.qj = np.zeros(self.num_actions, dtype=np.float32)
         self.dqj = np.zeros(self.num_actions, dtype=np.float32)
         self.obs = np.zeros(60, dtype=np.float32) 
         self.cmd = np.array([0.0, 0.0, 0.0])
         self.low_state=LowState()
-        # !!! 新增 !!!: 用于存储 EKF 估计的速度
         self.base_lin_vel = np.zeros(3, dtype=np.float32) 
+
+        # !!! 新增: 在线零点校准相关变量 !!!
+        # 移除校准逻辑，直接启动
+        # self.estimator_bias = np.zeros(3, dtype=np.float32)
+        # self.is_calibrated = False
+        # self.calibration_samples = []
+        # self.CALIBRATION_STEPS = 400 
+
+        # !!! 新增: 状态机变量 !!!
+        self.fsm_state = "RUNNING" # 直接进入运行状态
         
         # ... (默认关节角度不变) ...
+
+        
         self.default_dof_pos_policy_order = np.array([
             self.config.DEFAULT_JOINT_ANGLES['FL_hip_joint'], self.config.DEFAULT_JOINT_ANGLES['FL_thigh_joint'], self.config.DEFAULT_JOINT_ANGLES['FL_calf_joint'],
             self.config.DEFAULT_JOINT_ANGLES['FR_hip_joint'], self.config.DEFAULT_JOINT_ANGLES['FR_thigh_joint'], self.config.DEFAULT_JOINT_ANGLES['FR_calf_joint'],
@@ -60,30 +80,31 @@ class dataReciever(Node):
             self.config.DEFAULT_JOINT_ANGLES['RR_hip_joint'], self.config.DEFAULT_JOINT_ANGLES['RR_thigh_joint'], self.config.DEFAULT_JOINT_ANGLES['RR_calf_joint']
         ], dtype=np.float32)
 
-
-        # ... (ROS 2 订阅) ...
         if simulation:
             self.low_state_sub=self.create_subscription(LowState,"/mujoco/lowstate",self.low_state_callback,10)
             print("reading data from simuation")
-        else:    
+        else:
             self.low_state_sub=self.create_subscription(LowState,"/lowstate",self.low_state_callback,10) 
             print("reading data from reality")
 
-        # # !!! 新增 !!!: 订阅 EKF 速度估计
-        # self.velocity_sub = self.create_subscription(
-        #     TwistStamped,
-        #     "/ekf/velocity", # EKF 节点发布的话题
-        #     self.velocity_callback,
-        #     10)
-        # # !!! 修改 !!!: 订阅 MuJoCo 的真值速度
-        # # self.velocity_sub = self.create_subscription(
-        # #     TwistStamped,
-        # #     "/mujoco/ground_truth_velocity", # <--- 改成 MuJoCo 发布的
-        # #     self.velocity_callback,
-        # #     10)
-        if simulation and use_ground_truth:
-            self.get_logger().warn("USING GROUND TRUTH VELOCITY (GOD MODE)")
-            # 订阅仿真器直接发布的真值
+        if self.use_velocity_estimator:
+            self.get_logger().info("Using LSTM Velocity Estimator")
+            estimator_path = os.path.join(project_root, "resources", "policies", "velocity_estimator.pt")
+            if not os.path.exists(estimator_path):
+                self.get_logger().error(f"Velocity estimator model not found at: {estimator_path}")
+                sys.exit(1)
+            
+            # NEW: input_dim=33, LSTM architecture
+            self.estimator_model = VelocityEstimator(input_dim=33, hidden_dim=128, output_dim=3)
+            self.estimator_model.load_state_dict(torch.load(estimator_path, map_location='cpu'))
+            self.estimator_model.eval()
+            
+            # NEW: History length 11
+            self.estimator_history_buffer = collections.deque(maxlen=11)
+            self.get_logger().info(f"Velocity estimator loaded successfully. Input dim: 33, History: 11")
+        elif use_ground_truth:
+            self.get_logger().info("Using Ground Truth Velocity (Sim)")
+            # 订阅 MuJoCo 发布的真值速度，并绑定到 velocity_callback 更新 base_lin_vel
             self.velocity_sub = self.create_subscription(
                 TwistStamped,
                 "/mujoco/ground_truth_velocity", 
@@ -91,36 +112,48 @@ class dataReciever(Node):
                 10)
         else:
             self.get_logger().info("Using EKF Estimated Velocity")
-            # 订阅 EKF 估计值 (真机或仿真默认)
             self.velocity_sub = self.create_subscription(
                 TwistStamped,
                 "/ekf/velocity", 
                 self.velocity_callback,
                 10)
+        
+        # DEBUG: Subscribe to GT velocity for comparison
+        self.gt_vel = np.zeros(3, dtype=np.float32)
+        self.gt_vel_sub = self.create_subscription(
+            TwistStamped,
+            "/mujoco/ground_truth_velocity",
+            self.gt_vel_callback,
+            10
+        )
 
         self.get_logger().info("Waiting for data")
         
-        # 200Hz (0.005s) 运行策略
-        self.timer = self.create_timer(0.005, self.run) 
+        # self.timer = self.create_timer(0.005, self.run) 
         
         self.target_torque_puber=self.create_publisher(Float32MultiArray,"/rl/target_torques",10)
 
-        # !!! 新增: 速度控制状态变量 !!!
-        self.target_speed_level = 0.2  # 初始速度设为 0.2 m/s
-        self.last_y_state = 0          # 记录 Y 键上一帧状态
-        self.last_b_state = 0          # 记录 B 键上一帧状态
+        self.target_speed_level = 0.2
+        self.last_y_state = 0
+        self.last_b_state = 0
+        self.debug_counter = 0
+        self.global_counter = 0
 
-    # !!! 新增 !!!: EKF 速度回调
+    def gt_vel_callback(self, msg: TwistStamped):
+        self.gt_vel[0] = msg.twist.linear.x
+        self.gt_vel[1] = msg.twist.linear.y
+        self.gt_vel[2] = msg.twist.linear.z
+
     def velocity_callback(self, msg: TwistStamped):
         self.base_lin_vel[0] = msg.twist.linear.x
         self.base_lin_vel[1] = msg.twist.linear.y
         self.base_lin_vel[2] = msg.twist.linear.z
-
+        
     def low_state_callback(self,msg:LowState):
         self.low_state=msg
+        self.run()
     
     def _compute_sata_torques(self, raw_actions, dof_vel_policy_order):
-        # ... (SATA 力矩计算逻辑不变, dt=0.005) ...
         actions_scaled = raw_actions * self.ACTION_SCALE
         torques_limits = self.torque_limits
         current_activation_sign = np.tanh(actions_scaled / torques_limits)
@@ -133,8 +166,27 @@ class dataReciever(Node):
         self.motor_fatigue *= self.BETA
         return torques.astype(np.float32)
 
+    def _compute_pd_torques(self, target_q, current_q, current_dq):
+        """
+        Calculates PD control torques.
+        Args:
+            target_q (np.array): Desired joint positions (12,).
+            current_q (np.array): Current joint positions (12,).
+            current_dq (np.array): Current joint velocities (12,).
+        Returns:
+            np.array: Calculated PD torques (12,).
+        """
+        # Ensure target_q is mapped to policy order before use if necessary,
+        # but here target_q_stand is already in robot order.
+        torques = (target_q - current_q) * self.kp_stand - current_dq * self.kd_stand
+        return torques.astype(np.float32)
+
     def run(self):
-        
+        self.global_counter += 1
+        # if self.use_velocity_estimator and self.global_counter % 50 == 0:
+        #      buf_len = len(self.estimator_history_buffer) if hasattr(self, 'estimator_history_buffer') else 0
+        #      self.get_logger().info(f"[DEBUG] State: {self.fsm_state} | Cnt: {self.pd_stand_counter} | BufLen: {buf_len}")
+
         if (self.cmd_sub.axes and self.cmd_sub.axes[2] == -1 and self.cmd_sub.axes[5] == -1):
             sys.exit()
             
@@ -142,10 +194,7 @@ class dataReciever(Node):
             self.qj[i] = self.low_state.motor_state[i].q
             self.dqj[i] = self.low_state.motor_state[i].dq
         
-        # !!! 修复 1 !!!: 关节映射
-        # (FR,FL,RR,RL) -> (FL,FR,RL,RR)
         policy_to_robot_map = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.int32)
-        # 逆映射 (r2p) 恰好等于 (p2r)
         robot_to_policy_map = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8], dtype=np.int32)
 
         qj_policy = self.qj[robot_to_policy_map]
@@ -157,111 +206,159 @@ class dataReciever(Node):
         self.cmd = np.zeros(3)
         self.left_button, self.right_button = self.cmd_sub.is_pressed()
         
-        if self.left_button and self.right_button: # LB + RB 激活策略
-            # 1. 获取原始摇杆数据 (方向)
+        if self.left_button and self.right_button:
             raw_lx, raw_ly = self.cmd_sub.get_left_stick()
             raw_az = self.cmd_sub.get_right_stick()
             
-            # 2. 速度档位控制 (Y键加速, B键减速)
-            # 确保 xbox_command.py 已经修改并暴露了 self.buttons
             if hasattr(self.cmd_sub, 'buttons') and len(self.cmd_sub.buttons) > 3:
-                # --- 处理 Y 键 (Index 3): 加速 ---
                 current_y_state = self.cmd_sub.buttons[3]
-                # 检测上升沿 (从0变1的瞬间)
                 if current_y_state == 1 and self.last_y_state == 0: 
                     self.target_speed_level += 0.1
                     print(f"Speed UP: {self.target_speed_level:.1f} m/s")
-                self.last_y_state = current_y_state # 更新状态
+                self.last_y_state = current_y_state
                 
-                # --- 处理 B 键 (Index 1): 减速 ---
                 current_b_state = self.cmd_sub.buttons[1]
-                # 检测上升沿
                 if current_b_state == 1 and self.last_b_state == 0: 
                     self.target_speed_level -= 0.1
                     if self.target_speed_level < 0.0: 
-                        self.target_speed_level = 0.0 # 防止速度变为负数
+                        self.target_speed_level = 0.0
                     print(f"Speed DOWN: {self.target_speed_level:.1f} m/s")
-                self.last_b_state = current_b_state # 更新状态
+                self.last_b_state = current_b_state
 
-            # 3. 计算最终指令 (归一化方向 * 设定速度)
             magnitude = np.sqrt(raw_lx**2 + raw_ly**2)
             target_vx = 0.0
             target_vy = 0.0
             
-            # 设置死区，防止摇杆漂移导致机器人缓慢蠕动
             if magnitude > 0.1: 
-                # 归一化方向向量 (Direction Vector)
                 dir_x = raw_lx / magnitude
                 dir_y = raw_ly / magnitude
                 
-                # 应用当前设定的速度档位
                 target_vx = dir_x * self.target_speed_level
                 target_vy = dir_y * self.target_speed_level
             
-            # 4. 转向处理 (转向通常保留线性控制手感会更好)
-            # 如果你也想固定转向速度，可以像上面一样处理，但建议保留线性
             target_wz = raw_az * 1.0 
-
-            # 5. 赋值给 self.cmd
             self.cmd = np.array([target_vx, target_vy, target_wz])
         
         gravity_orientation = self.get_gravity_orientation(quat)
         
-        # !!! 修复 2 !!!: 使用 EKF 的线速度
-        obs_lin_vel = self.base_lin_vel * self.config.OBS_SCALES.lin_vel
-        # obs_lin_vel = np.zeros(3, dtype=np.float32) # <--- 强制将线速度观测值设为 [0, 0, 0]
+        final_torques_robot_order = np.zeros(12, dtype=np.float32) # Default if not handled by FSM/estimator
+        
+        # Prepare Scaled Observations for Input Construction (Common to both states)
         obs_ang_vel = ang_vel * self.config.OBS_SCALES.ang_vel
         obs_dof_pos = (qj_policy - self.default_dof_pos_policy_order) * self.config.OBS_SCALES.dof_pos
         obs_dof_vel = dqj_policy * self.config.OBS_SCALES.dof_vel
         commands_scaled = self.cmd * self.CMD_SCALES
 
-        self.obs = np.concatenate([
-            obs_lin_vel,        # 3 (来自 EKF)
-            obs_ang_vel,        # 3
-            gravity_orientation,  # 3
-            obs_dof_pos,        # 12
-            obs_dof_vel,        # 12
-            commands_scaled,    # 3
-            self.last_torques,  # 12
-            self.motor_fatigue  # 12
-        ]).astype(np.float32)
-        
-        self.obs = np.clip(self.obs, -100, 100)
-        
-        raw_action = self.policy.get_action(self.obs) 
-        final_torques_policy_order = self._compute_sata_torques(raw_action, dqj_policy)
-        self.last_torques = final_torques_policy_order.copy()
-        
-        final_torques_robot_order = final_torques_policy_order[policy_to_robot_map]
-        
+        # --- FSM 逻辑 (仅当使用估计器时才激活) ---
+        if self.use_velocity_estimator:
+            # Shared Feature Calculation for Estimator
+            # 1. Linear Acceleration (Body Frame)
+            # IMU Acc = a_body - g_body (reaction force). Gravity vector = g_body.
+            # So a_body = IMU Acc + g_body
+            lin_acc_raw = np.array(self.low_state.imu_state.accelerometer, dtype=np.float32)
+            pure_lin_acc = lin_acc_raw + (gravity_orientation * 9.81)
+            
+            # 2. Construct Feature Vector: [Pos(12), Vel(12), Acc(3), AngVel(3), Grav(3)] -> 33 dim
+            # Note: Using RAW joint data (qj_policy, dqj_policy) as training did not scale them for estimator.
+            current_features = np.concatenate([
+                qj_policy,          # 12
+                dqj_policy,         # 12
+                pure_lin_acc,       # 3
+                ang_vel,            # 3
+                gravity_orientation # 3
+            ]).astype(np.float32)
+
+            # DEBUG LOGGING (Only log every 50 steps to reduce spam)
+            est = self.base_lin_vel
+            gt = self.gt_vel
+            grav = gravity_orientation
+            if self.global_counter % 50 == 0:
+                self.get_logger().info(f"[RUNNING] CMD: [{self.cmd[0]:.2f}, {self.cmd[1]:.2f}, {self.cmd[2]:.2f}] | GT: [{gt[0]:.2f}, {gt[1]:.2f}, {gt[2]:.2f}] | EST: [{est[0]:.2f}, {est[1]:.2f}, {est[2]:.2f}] | GRAV: [{grav[0]:.2f}, {grav[1]:.2f}, {grav[2]:.2f}]")
+
+            self.estimator_history_buffer.append(current_features)
+
+            if len(self.estimator_history_buffer) == 11:
+                input_sequence = np.stack(list(self.estimator_history_buffer), axis=0)
+                input_tensor = torch.from_numpy(input_sequence).unsqueeze(0).float()
+                with torch.no_grad():
+                    raw_estimated_velocity = self.estimator_model(input_tensor).squeeze().numpy()
+                
+                # 直接使用预测值，无偏置
+                self.base_lin_vel = raw_estimated_velocity 
+                
+            else:
+                self.base_lin_vel = np.zeros(3, dtype=np.float32)
+
+            # 2. 运行RL策略
+            obs_lin_vel = self.base_lin_vel * self.config.OBS_SCALES.lin_vel
+            
+            self.obs = np.concatenate([
+                obs_lin_vel,
+                obs_ang_vel,
+                gravity_orientation,
+                obs_dof_pos,
+                obs_dof_vel,
+                commands_scaled,
+                self.last_torques,
+                self.motor_fatigue
+            ]).astype(np.float32)
+            
+            self.obs = np.clip(self.obs, -100, 100)
+            
+            raw_action = self.policy.get_action(self.obs) 
+            final_torques_policy_order = self._compute_sata_torques(raw_action, dqj_policy)
+            self.last_torques = final_torques_policy_order.copy()
+            
+            final_torques_robot_order = final_torques_policy_order[policy_to_robot_map]
+            
+        else: # EKF or Ground Truth mode
+            # This part is the existing code for EKF/Ground Truth mode
+            obs_lin_vel = self.base_lin_vel * self.config.OBS_SCALES.lin_vel
+            obs_ang_vel = ang_vel * self.config.OBS_SCALES.ang_vel
+            obs_dof_pos = (qj_policy - self.default_dof_pos_policy_order) * self.config.OBS_SCALES.dof_pos
+            obs_dof_vel = dqj_policy * self.config.OBS_SCALES.dof_vel
+            commands_scaled = self.cmd * self.CMD_SCALES
+
+            self.obs = np.concatenate([
+                obs_lin_vel,
+                obs_ang_vel,
+                gravity_orientation,
+                obs_dof_pos,
+                obs_dof_vel,
+                commands_scaled,
+                self.last_torques,
+                self.motor_fatigue
+            ]).astype(np.float32)
+            
+            self.obs = np.clip(self.obs, -100, 100)
+            
+            raw_action = self.policy.get_action(self.obs) 
+            final_torques_policy_order = self._compute_sata_torques(raw_action, dqj_policy)
+            self.last_torques = final_torques_policy_order.copy()
+            
+            final_torques_robot_order = final_torques_policy_order[policy_to_robot_map]
+            
         msg=Float32MultiArray()
         msg.data.extend(final_torques_robot_order.astype(np.float32).tolist())
         self.target_torque_puber.publish(msg)
-        
     @staticmethod
     def get_gravity_orientation(quaternion):
-        # MuJoCo 的四元数顺序通常是 [w, x, y, z]
         qw = quaternion[0]
         qx = quaternion[1]
         qy = quaternion[2]
         qz = quaternion[3]
         
-        # 世界坐标系下的重力向量 [0, 0, -1]
         gravity_vec = np.array([0., 0., -1.], dtype=np.float32)
         
-        # !!! 核心修改 !!! 
-        # 使用共轭四元数 [w, -x, -y, -z] 来进行逆旋转 (World -> Body)
-        # 也就是将 x, y, z 取反
+        # Revert to standard inverse rotation (conjugate)
         qv = np.array([-qx, -qy, -qz], dtype=np.float32) 
         
-        # 下面的公式保持不变，但因为 qv 变了，计算结果就是逆旋转了
         uv = np.cross(qv, gravity_vec)
         uuv = np.cross(qv, uv)
         projected_gravity = gravity_vec + 2 * (qw * uv + uuv)
         
         return projected_gravity
 
-    
 def main():
     rclpy.init()
     
@@ -286,11 +383,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--is_simulation', type=str, choices=["True", "False"], default="True")
     parser.add_argument('--use_ground_truth', action='store_true', help="Use ground truth velocity from simulation instead of EKF")
+    parser.add_argument('--use_velocity_estimator', action='store_true', help="Use the trained LSTM velocity estimator")
     args = parser.parse_args()
     simulation = args.is_simulation == "True"
     use_ground_truth = args.use_ground_truth
+    use_velocity_estimator=args.use_velocity_estimator
     
-    reciever_node=dataReciever(config=config, policy=policy, simulation=simulation, use_ground_truth=use_ground_truth)
+    reciever_node=dataReciever(config=config, policy=policy, simulation=simulation, use_ground_truth=use_ground_truth, use_velocity_estimator=use_velocity_estimator)
     rclpy.spin(reciever_node)
     reciever_node.destroy_node()
     rclpy.shutdown()

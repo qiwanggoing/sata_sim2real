@@ -3,6 +3,7 @@ import time
 import threading
 import rclpy
 from rclpy.node import Node
+import os
 
 import mujoco.viewer
 import mujoco
@@ -16,30 +17,57 @@ from sensor_msgs.msg import Imu, JointState
 from geometry_msgs.msg import Twist, Vector3
 from std_msgs.msg import Float32MultiArray
 
-
+# Import the VelocityEstimator class
+# Ensure estimator.py is in the same directory or PYTHONPATH
+from estimator import VelocityEstimator 
 
 class MujocoSimulator(Node):
     def __init__(self):
         super().__init__("mujoco_simulator")
         self.cmd_sub = XboxController(self)  
         self.load_config()
+        
+        # Publishers
         self.imu_pub=self.create_publisher(Imu,"/imu/data",10)
         self.contact_force_pub=self.create_publisher(Float32MultiArray,"/contact",10)
         self.joint_pub=self.create_publisher(Float32MultiArray,"/joint_angels",10)
         self.joint_vel_pub=self.create_publisher(Float32MultiArray,"/joint_velocities",10)
         self.omega_pub=self.create_publisher(Float32MultiArray,"gyro",10)
         self.z_axis_force_pub=self.create_publisher(Float32MultiArray,"/z_axis_force",10)
-        self.step_counter = 0
         self.true_vel_pub=self.create_publisher(Float32MultiArray,"/true_velocities",10)
+        self.est_vel_pub=self.create_publisher(Float32MultiArray,"/estimated_velocities",10) # New publisher
+
+        self.step_counter = 0
 
         # Initialize Mujoco
         self.init_mujoco()
 
-        # Load policy
+        # --- Load Policy and Estimator ---
+        # 1. Load Policy (JIT)
+        print(f"Loading policy from: {self.policy_path}")
         self.policy = torch.jit.load(self.policy_path)
+        
+        # 2. Load Estimator
+        # Assuming estimator weights are in the same folder as policy with name 'sata_estimator.pt'
+        # You might need to adjust the filename below matches what you copied
+        self.estimator_path = str(Path(self.policy_path).parent / "sata_estimator.pt")
+        print(f"Loading estimator from: {self.estimator_path}")
+        
+        self.estimator = VelocityEstimator(input_dim=45, temporal_steps=6).to('cpu')
+        self.estimator.load_state_dict(torch.load(self.estimator_path, map_location='cpu'))
+        self.estimator.eval()
+
+        # --- Initialize State Variables ---
         self.action = np.zeros(self.num_actions, dtype=np.float32)
         self.target_dof_pos = self.default_angles.copy()
         self.obs = np.zeros(self.num_obs, dtype=np.float32)
+        
+        # --- History Buffer for Estimator ---
+        # Shape: (Batch=1, Seq=6, Dim=45)
+        self.history_len = 6
+        self.proprio_dim = 45
+        self.obs_history_buffer = torch.zeros(1, self.history_len, self.proprio_dim)
+
         self.timer = self.create_timer(self.simulation_dt, self.step_simulation)
 
     def load_config(self):
@@ -69,32 +97,20 @@ class MujocoSimulator(Node):
         """Initialize Mujoco model and data"""
         self.m = mujoco.MjModel.from_xml_path(self.xml_path)
         self.d = mujoco.MjData(self.m)
-        self.d.qpos[3:7]=[
-              0.9932722449302673,
-   0.008041736669838428,
-   0.0063380408100783825,
-   -0.11535090208053589]
-
+        # Initial pose
+        self.d.qpos[3:7]=[0.9932722449302673, 0.008041736669838428, 0.0063380408100783825, -0.11535090208053589]
         laydown=[-0.63224804,  0.8544461,  -2.7341957,   0.73985434,  0.9071291,  -2.6931078,
- -0.7145372,   0.43530887, -2.7260761,   0.76852196,  0.8470082,  -2.7184937 ]
-        
-        
-
-
-        
+                 -0.7145372,   0.43530887, -2.7260761,   0.76852196,  0.8470082,  -2.7184937 ]
         for i in range(12):
-            self.d.qpos[7+i] =laydown[i] 
+            self.d.qpos[7+i] = laydown[i] 
         self.m.opt.timestep = self.simulation_dt
         self.viewer = mujoco.viewer.launch_passive(self.m, self.d)
-        print("Number of qpos:", self.m.nq)
-        print("Joint order:")
-        for i in range(self.m.njnt):
-            print(f"{i}: {self.m.joint(i).name}")
+
     def step_simulation(self):
-        """Main simulation step (called by ROS 2 timer)"""
-        # PD Control
+        """Main simulation step"""
         self.step_counter += 1
 
+        # PD Control
         tau = self.pd_control(
             self.target_dof_pos,
             self.d.qpos[7:],
@@ -113,44 +129,114 @@ class MujocoSimulator(Node):
         self.publish_sensor_data()
         
         # Policy inference (every N steps)
-        if self.step_counter % self.control_decimation ==0:
+        if self.step_counter % self.control_decimation == 0:
             self.run_policy()
         
         # Sync Mujoco viewer
         self.viewer.sync()
 
     def run_policy(self):
-        """Run policy inference and update target DOF positions"""
-        # Build observation vector
-        self.cmd=np.zeros(3)
-        # self.get_logger().info("run policy")
-        self.left_button,self.right_button=self.cmd_sub.is_pressed()
+        """Run estimator and policy"""
+        
+        # 1. Read Joystick Command
+        self.cmd = np.zeros(3)
+        self.left_button, self.right_button = self.cmd_sub.is_pressed()
         if self.left_button and self.right_button:
-            linear_x,linear_y=self.cmd_sub.get_left_stick()
-            angular_z=self.cmd_sub.get_right_stick()
-            self.cmd=np.array([linear_x,linear_y,angular_z])
-        # self.get_logger().info(f"FORCE {self.d.sensordata[55:]}")
-        # print(len(self.d.sensordata))
-        self.obs[:3] = self.d.sensordata[40:43] * self.ang_vel_scale  # Angular velocity
-        self.obs[3:6] = self.get_gravity_orientation(self.d.qpos[3:7])  # Gravity vector
-        self.obs[6:9] = self.cmd * self.cmd_scale  # Scaled command
-        self.obs[9:21] = (self.d.qpos[7:19] - self.default_angles) * self.dof_pos_scale  # Joint positions
-        self.obs[21:33] = self.d.qvel[6:18] * self.dof_vel_scale  # Joint velocities
-        self.obs[33:45] = self.action  # Previous actions
-        self.grav_acc=9.81*self.obs[3:6]
-        # Policy inference
+            linear_x, linear_y = self.cmd_sub.get_left_stick()
+            angular_z = self.cmd_sub.get_right_stick()
+            self.cmd = np.array([linear_x, linear_y, angular_z])
+
+        # 2. Build Proprioceptive Observation (45 dims)
+        # Indices correspond to:
+        # 0-2: Angular Velocity
+        # 3-5: Projected Gravity
+        # 6-8: Commands
+        # 9-20: DOF Pos
+        # 21-32: DOF Vel
+        # 33-44: Last Actions
+        
+        proprio_obs = np.zeros(45, dtype=np.float32)
+        
+        ang_vel = self.d.sensordata[40:43] * self.ang_vel_scale
+        gravity_vec = self.get_gravity_orientation(self.d.qpos[3:7])
+        self.grav_acc = 9.81 * gravity_vec # For IMU pub
+        
+        proprio_obs[0:3] = ang_vel
+        proprio_obs[3:6] = gravity_vec
+        proprio_obs[6:9] = self.cmd * self.cmd_scale
+        proprio_obs[9:21] = (self.d.qpos[7:19] - self.default_angles) * self.dof_pos_scale
+        proprio_obs[21:33] = self.d.qvel[6:18] * self.dof_vel_scale
+        proprio_obs[33:45] = self.action
+
+        # 3. Update History Buffer
+        current_proprio_tensor = torch.from_numpy(proprio_obs).unsqueeze(0).unsqueeze(0) # (1, 1, 45)
+        self.obs_history_buffer = torch.cat((self.obs_history_buffer[:, 1:], current_proprio_tensor), dim=1)
+        
+        # 4. Run Estimator
+        with torch.no_grad():
+            estimated_vel = self.estimator(self.obs_history_buffer) # (1, 3)
+            est_vel_np = estimated_vel.cpu().numpy().squeeze()
+
+        # Publish estimated velocity for debugging
+        est_vel_msg = Float32MultiArray()
+        est_vel_msg.data = list(est_vel_np)
+        self.est_vel_pub.publish(est_vel_msg)
+
+        # 5. Build Full Observation for Policy (235 dims)
+        # obs[0:3] = Linear Velocity (Using ESTIMATED value now!)
+        # obs[3:48] = Proprioception (Same as above)
+        # ... remaining dims are height measurements (if any) or zeros if blind/simulated flat ground
+        
+        self.obs[:3] = est_vel_np * self.lin_vel_scale # IMPORTANT: Apply scale if your training did! 
+        # Note: Usually lin_vel_scale is 2.0. Ensure training estimator target was unscaled or scaled. 
+        # In standard legged_gym, the 'lin_vel' in obs buffer is scaled. 
+        # BUT, our estimator target in on_policy_runner was: target_vel = obs[:, :3].detach() 
+        # which IS ALREADY SCALED by 2.0.
+        # So the estimator PREDICTS the SCALED velocity. 
+        # Therefore, we might NOT need to multiply by scale again if the estimator output is already scaled.
+        # HOWEVER, looking at typical implementations, usually we regress real velocity.
+        # Let's check on_policy_runner again. 
+        # obs[:, :3] IS SCALED in legged_robot.py compute_observations().
+        # So the estimator learned to predict SCALED velocity directly.
+        # So: self.obs[:3] = est_vel_np is correct (no double scaling).
+        # Wait, let's check safety.
+        # If I trained `target = obs[:, :3]`, then `pred` is scaled.
+        # So `self.obs[:3] = pred` is correct. 
+        # The line `self.obs[:3] = est_vel_np * self.lin_vel_scale` implies est_vel_np is physical units.
+        # **CORRECTION**: The estimator trained on `obs[:, :3]`. `obs` is already scaled.
+        # So `est_vel_np` is already scaled.
+        # We should assign it directly: `self.obs[:3] = est_vel_np`
+        
+        self.obs[:3] = est_vel_np 
+
+        self.obs[3:48] = proprio_obs # Fill the rest
+        
+        # Handle height measurements if needed (obs[48:]). 
+        # For flat ground sim, usually assumed 0 or handled by environment. 
+        # If your policy expects 235 dims, ensure the rest are filled appropriately.
+        
+        # 6. Run Policy
         obs_tensor = torch.from_numpy(self.obs).unsqueeze(0)
         self.action = self.policy(obs_tensor).detach().numpy().squeeze()
+        
         self.target_dof_pos = self.action * self.action_scale + self.default_angles
-        print(self.target_dof_pos)
+        # print(self.target_dof_pos)
+
     def publish_sensor_data(self):
         imu_msg = Imu()
         if not hasattr(self,"grav_acc"): return
         imu_msg.header.stamp = self.get_clock().now().to_msg()
-        imu_msg.linear_acceleration.x = self.d.sensordata[43]+self.grav_acc[0]  # ax
-        imu_msg.linear_acceleration.y = self.d.sensordata[44]+self.grav_acc[1]  # ay
-        imu_msg.linear_acceleration.z = self.d.sensordata[45]+self.grav_acc[2]  # az
+        imu_msg.linear_acceleration.x = self.d.sensordata[43]+self.grav_acc[0]
+        imu_msg.linear_acceleration.y = self.d.sensordata[44]+self.grav_acc[1]
+        imu_msg.linear_acceleration.z = self.d.sensordata[45]+self.grav_acc[2]
         self.imu_pub.publish(imu_msg)
+        
+        # Publish True Velocity (Ground Truth) for comparison
+        true_velocity_array=Float32MultiArray()
+        true_velocity_array.data=list(self.d.sensordata[52:55]) # Ensure this index matches your XML sensor
+        self.true_vel_pub.publish(true_velocity_array)
+        
+        # ... (Rest of the publishers same as before) ...
         array=Float32MultiArray()
         fl_force_list=np.array([self.d.sensordata[i] for i in range (55,58)])
         fr_force_list=np.array([self.d.sensordata[i] for i in range (58,61)])
@@ -173,14 +259,7 @@ class MujocoSimulator(Node):
         self.omega_pub.publish(omega_array)
         z_axis_force_array=Float32MultiArray()
         z_axis_force_array.data=[self.d.sensordata[i] for i in range (57,67,3)]
-        # print([self.d.sensordata[i] for i in range (57,67,3)])
         self.z_axis_force_pub.publish(z_axis_force_array)
-        true_velocity_array=Float32MultiArray()
-        true_velocity_array.data=list(self.d.sensordata[52:55])
-        self.true_vel_pub.publish(true_velocity_array)
-
-
-
 
 
     @staticmethod
@@ -200,22 +279,9 @@ class MujocoSimulator(Node):
 
     @staticmethod
     def pd_control(target_q, q, kp, dq, kd):
-        """Calculates torques from position commands"""
         torques=(target_q - q) * kp -  dq * kd
         return torques
     
-    @staticmethod
-    def quat_to_rot_matrix(q):
-        """ 将四元数 (x, y, z, w) 转换为旋转矩阵 (3x3) """
-        w,x, y, z = q
-        R = np.array([
-            [1 - 2*y**2 - 2*z**2, 2*x*y - 2*z*w,     2*x*z + 2*y*w],
-            [2*x*y + 2*z*w,     1 - 2*x**2 - 2*z**2, 2*y*z - 2*x*w],
-            [2*x*z - 2*y*w,     2*y*z + 2*x*w,     1 - 2*x**2 - 2*y**2]
-        ])
-        return R
-    
-
 def main(args=None):
     rclpy.init(args=args)
     node = MujocoSimulator()
@@ -230,4 +296,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-

@@ -45,13 +45,11 @@ class MujocoSimulator(Node):
         self.init_mujoco()
         self.tau=[0.0]*12 # tau 将由 target_torque_callback 直接计算和设置
         
-        self.timer = self.create_timer(0.002, self.publish_sensor_data) # 保持 500Hz 发布传感器数据
-        
-        # !!!删除!!!: self.timer2 和 self.update_tau
-        # (PD控制和力矩应用将在 target_torque_callback 中处理)
+        # !!! 修复: 删除 500Hz 定时器，避免双重发布 !!!
+        # self.timer = self.create_timer(0.002, self.publish_sensor_data) 
         
         self.running=True
-        self.recieve_data=False
+        self.recieve_data=True # !!! 修复: 默认允许仿真运行，避免死锁 !!!
         self.sim_thread=threading.Thread(target=self.step_simulation)
         self.sim_thread.start()
 

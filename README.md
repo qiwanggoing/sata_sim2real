@@ -55,10 +55,10 @@
 
 ## 运行方式
 
-### Sim2Sim 模式
+### Sim2Sim 模式 (MuJoCo 仿真)
 
-`Sim2Sim` 模式需 **4 个终端**。  
-在每个终端运行前，必须执行：
+`Sim2Sim` 模式使用 **3 个终端**。  
+在每个终端运行任何指令之前，必须执行：
 
 ```bash
 source /opt/ros/foxy/setup.bash
@@ -71,19 +71,14 @@ source install/setup.bash
 ros2 run deploy_rl_policy mujoco_simulator.py
 ```
 
-#### 终端 2 — 启动 XBox 手柄
+#### 终端 2 — 启动手柄驱动 (Joystick)
 ```bash
 ros2 run joy joy_node
 ```
 
-#### 终端 3 — 启动状态机 (C++)
+#### 3 — 启动 SATA 策略节点 (Python)
 ```bash
-ros2 run deploy_rl_policy low_level_ctrl --ros-args -p is_simulation:=true
-```
-
-#### 终端 4 — 启动 SATA 策略节点 (Python)
-```bash
-ros2 run deploy_rl_policy rl_policy.py --is_simulation True
+ros2 run deploy_rl_policy rl_policy.py --use_velocity_estimator --is_simulation True
 ```
 
 ---
